@@ -1,0 +1,29 @@
+{
+  "name": "nexa-model-admin",
+  "main": "./admin/worker.js",
+  "compatibility_date": "2026-08-06",
+  "routes": [
+    {
+      "pattern": "onlyadmin.nexa-model.com",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./dist-admin",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/admin/*"]
+  },
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "mute-shape-c1b3.cloudflareaccess.com",
+    "ACCESS_AUD": "037437dc99388742064478449072b915bc3b19d0c2d327646e01d20c2bce3bc1",
+    "ADMIN_EMAILS": "itszinniraahmad@gmail.com"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nexa-production",
+      "database_id": "cd6a3fa4-c801-4ee5-8ca7-103b11509908"
+    }
+  ]
+}

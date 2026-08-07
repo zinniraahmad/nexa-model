@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:admin": "vite --config vite.admin.config.js",
     "build": "vite build",
+    "build:admin": "vite build --config vite.admin.config.js",
+    "build:all": "npm run build && npm run build:admin",
+    "deploy:admin": "npm run build:admin && wrangler deploy --config wrangler.admin.jsonc",
     "preview": "vite preview"
   },
   "dependencies": {
