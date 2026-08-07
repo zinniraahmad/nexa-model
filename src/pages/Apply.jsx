@@ -18,7 +18,7 @@ const processSteps = [
   ['07', 'Training Completion', 'Tamat Latihan', 'Session count varies by performance. Candidates should generally prepare for approximately 3–4 training and assessment sessions.', 'Jumlah sesi berbeza mengikut prestasi. Secara umum, calon perlu bersedia untuk sekitar 3–4 sesi latihan dan penilaian.'],
 ]
 
-function Introduction({ accepted, setAccepted, onContinue }) {
+export function Introduction({ accepted, setAccepted, onContinue }) {
   return (
     <section className="application-information">
       <div className="information-hero">

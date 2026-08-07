@@ -47,6 +47,17 @@ Enter any valid email and any password. Authentication is mocked for now.
 
 Replace `https://forms.google.com` in `src/pages/Home.jsx` with the real Nexa Model application form URL.
 
+## Full application form
+
+The `/apply` flow stores core contact information in `applicants`, complete form responses in
+`applicant_details`, and categorized ImageKit uploads in `applicant_photos`.
+
+Apply the D1 migration once before deploying this version:
+
+```powershell
+npx wrangler d1 execute nexa-production --remote --file migrations/0001_applicant_details.sql
+```
+
 ## Production note
 
 When deploying an SPA, configure the host to rewrite unknown routes to `index.html`, so `/login` and `/portal` work after a browser refresh.

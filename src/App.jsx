@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import Home from './pages/Home'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
-import Apply from './pages/Apply'
+import Apply from './pages/TalentApplication'
 import { navigate, usePathname } from './router'
 
 export default function App() {
