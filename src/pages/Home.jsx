@@ -24,7 +24,7 @@ export default function Home() {
               Connecting modern activewear brands with confident talent built for movement, wellness and performance.
             </p>
             <div className="hero-actions">
-              <a className="button button-dark" href="#apply">Join our network <ArrowRight size={17} /></a>
+              <Link className="button button-dark" to="/apply">Join our network <ArrowRight size={17} /></Link>
               <a className="underlined-link" href="#brands">I represent a brand</a>
             </div>
           </div>
@@ -93,10 +93,10 @@ export default function Home() {
           <p className="section-label">JOIN THE NETWORK</p>
           <h2>Ready for your<br /><em>next move?</em></h2>
           <p>Applications are open for new and experienced activewear talent.</p>
-          <a className="button button-dark large-button" href="https://forms.google.com" target="_blank" rel="noreferrer">
+          <Link className="button button-dark large-button" to="/apply">
             Start your application <MoveUpRight size={18} />
-          </a>
-          <small>Replace this demo URL with your Google Form link.</small>
+          </Link>
+          <small>It takes about 5 minutes. Have up to 5 recent photos ready.</small>
         </section>
       </main>
       <Footer />

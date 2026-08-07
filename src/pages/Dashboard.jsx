@@ -1,6 +1,7 @@
 import { Bell, BookOpen, Check, ChevronRight, ClipboardCheck, FileVideo, LogOut, Menu, UserRound } from 'lucide-react'
 import { Link } from '../router'
 import ThemeToggle from '../components/ThemeToggle'
+import officialLogo from '../assets/images/official_logo_2Kpx.png'
 
 const stages = [
   ['Application', 'Completed', true],
@@ -14,7 +15,7 @@ export default function Dashboard() {
   return (
     <div className="dashboard-shell">
       <aside className="sidebar">
-        <div className="brand brand-light">NEXA<span>MODEL</span></div>
+        <div className="brand brand-light"><img className="brand-logo brand-logo-light" src={officialLogo} alt="Nexa Model" /></div>
         <nav>
           <a className="active" href="#overview"><UserRound size={18} /> Overview</a>
           <a href="#training"><BookOpen size={18} /> Training</a>

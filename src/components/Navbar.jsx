@@ -1,12 +1,13 @@
 import { Menu, MoveUpRight } from 'lucide-react'
 import { Link } from '../router'
 import ThemeToggle from './ThemeToggle'
+import officialLogo from '../assets/images/official_logo_2Kpx.png'
 
 export default function Navbar() {
   return (
     <header className="nav-shell">
       <Link className="brand" to="/" aria-label="Nexa Model home">
-        NEXA<span>MODEL</span>
+        <img className="brand-logo" src={officialLogo} alt="Nexa Model" />
       </Link>
 
       <nav className="desktop-nav" aria-label="Main navigation">
@@ -19,9 +20,9 @@ export default function Navbar() {
       <div className="nav-actions">
         <ThemeToggle />
         <Link className="text-link" to="/login">Talent Login</Link>
-        <a className="button button-dark" href="#apply">
+        <Link className="button button-dark" to="/apply">
           Apply Now <MoveUpRight size={16} />
-        </a>
+        </Link>
         <button className="menu-button" aria-label="Open menu"><Menu /></button>
       </div>
     </header>

@@ -1,10 +1,20 @@
 {
   "name": "nexa-model",
+  "main": "./src/worker.js",
   "compatibility_date": "2026-08-06",
+
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
   },
+
+  "vars": {
+    "IMAGEKIT_URL_ENDPOINT": "https://ik.imagekit.io/4wqtbbxlw",
+    "IMAGEKIT_PUBLIC_KEY": "public_JoigL0BTKplQWvruBFu3esYJiuU="
+  },
+
   "d1_databases": [
     {
       "binding": "DB",

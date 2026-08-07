@@ -1,8 +1,10 @@
+import officialLogo from '../assets/images/official_logo_2Kpx.png'
+
 export default function Footer() {
   return (
     <footer className="footer">
       <div>
-        <div className="brand brand-light">NEXA<span>MODEL</span></div>
+        <div className="brand brand-light"><img className="brand-logo brand-logo-light" src={officialLogo} alt="Nexa Model" /></div>
         <p>Talent for movement, fashion and performance.</p>
       </div>
       <div className="footer-links">
