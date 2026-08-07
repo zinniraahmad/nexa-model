@@ -39,6 +39,14 @@ h1 { margin: 0 0 8px; font-size: clamp(38px, 5vw, 62px); letter-spacing: -.055em
 select { border: 1px solid var(--line); border-radius: 8px; padding: 0 38px 0 14px; background: var(--input); color: var(--ink); }
 .application-list { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .application-row { width: 100%; display: grid; grid-template-columns: minmax(220px, 2fr) 1.2fr 80px 110px 160px 38px; gap: 18px; align-items: center; padding: 18px 14px 18px 20px; border: 0; border-bottom: 1px solid var(--line-soft); background: var(--surface); text-align: left; cursor: pointer; color: inherit; }
+.retention-row { box-shadow: inset 3px 0 #d09524; }
+.orphaned-row { box-shadow: inset 3px 0 #b42318; }
+.application-row time { display: flex; align-items: center; gap: 5px; }
+.application-row time.retention-overdue { color: #b23b3b; font-weight: 600; }
+.retention-alert { display: flex; gap: 13px; align-items: flex-start; margin: -18px 0 22px; padding: 16px 18px; border: 1px solid #dcc27f; border-radius: 9px; background: #fff5d9; color: #76560c; }
+.retention-alert div { display: grid; gap: 4px; }
+.retention-alert span { font-size: 12px; line-height: 1.5; }
+:root[data-theme='dark'] .retention-alert { border-color: #705d2e; background: #332d1d; color: #f0cf77; }
 .application-row:last-child { border-bottom: 0; }
 .application-row:hover { background: var(--surface-hover); }
 .application-row:focus-visible { outline: 2px solid #817d70; outline-offset: -2px; }
@@ -53,6 +61,7 @@ select { border: 1px solid var(--line); border-radius: 8px; padding: 0 38px 0 14
 .status-reviewing { background: #fff0c7; color: #87630a; }
 .status-shortlisted { background: #dceede; color: #286331; }
 .status-rejected { background: #f2dddd; color: #8a3333; }
+.status-orphaned { background: #fee4e2; color: #912018; }
 .empty { min-height: 240px; display: flex; gap: 12px; flex-direction: column; justify-content: center; align-items: center; color: var(--muted); }
 .empty button { border: 0; background: #25241f; color: white; padding: 9px 15px; border-radius: 6px; }
 .error, .form-error { color: #9b3333; }

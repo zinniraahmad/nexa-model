@@ -15,6 +15,25 @@
     "IMAGEKIT_PUBLIC_KEY": "public_JoigL0BTKplQWvruBFu3esYJiuU="
   },
 
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": true },
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 }
+  },
+
+  "ratelimits": [
+    {
+      "name": "APPLY_RATE_LIMITER",
+      "namespace_id": "31002",
+      "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      "name": "UPLOAD_RATE_LIMITER",
+      "namespace_id": "31003",
+      "simple": { "limit": 60, "period": 60 }
+    }
+  ],
+
   "d1_databases": [
     {
       "binding": "DB",

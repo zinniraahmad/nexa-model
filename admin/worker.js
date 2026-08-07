@@ -1,4 +1,5 @@
 import { requireAdmin } from './access.js'
+import ImageKit from '@imagekit/nodejs'
 
 const STATUSES = ['submitted', 'reviewing', 'shortlisted', 'rejected']
 
@@ -8,6 +9,35 @@ function parseResponses(value) {
   } catch {
     return {}
   }
+}
+
+function signPhotoUrls(env, photos) {
+  if (!env.IMAGEKIT_PRIVATE_KEY || !env.IMAGEKIT_URL_ENDPOINT) {
+    throw new Error('Private image delivery is not configured for the admin Worker.')
+  }
+  const imagekit = new ImageKit({ privateKey: env.IMAGEKIT_PRIVATE_KEY })
+  return photos.map(({ file_url: fileUrl, ...photo }) => ({
+    ...photo,
+    file_url: imagekit.helper.buildSrc({
+      urlEndpoint: env.IMAGEKIT_URL_ENDPOINT,
+      src: fileUrl,
+      signed: true,
+      expiresIn: 300,
+    }),
+  }))
+}
+
+async function deleteImageKitFiles(env, fileIds) {
+  if (!fileIds.length) return
+  if (!env.IMAGEKIT_PRIVATE_KEY) throw new Error('ImageKit deletion is not configured.')
+  const authorization = `Basic ${btoa(`${env.IMAGEKIT_PRIVATE_KEY}:`)}`
+  const results = await Promise.all(fileIds.map(async (fileId) => {
+    const response = await fetch(`https://api.imagekit.io/v1/files/${encodeURIComponent(fileId)}`, {
+      method: 'DELETE', headers: { Authorization: authorization },
+    })
+    return response.ok || response.status === 404
+  }))
+  if (results.some((deleted) => !deleted)) throw new Error('One or more ImageKit files could not be deleted.')
 }
 
 async function handleApi(request, env, url) {
@@ -21,7 +51,7 @@ async function handleApi(request, env, url) {
   if (url.pathname === '/api/admin/applications' && request.method === 'GET') {
     const search = url.searchParams.get('search')?.trim() || ''
     const status = url.searchParams.get('status')?.trim() || ''
-    const conditions = []
+    const conditions = ["(d.application_status IS NULL OR d.application_status <> 'pending_upload')"]
     const bindings = []
     if (search) {
       conditions.push('(a.full_name LIKE ? OR a.email LIKE ? OR a.phone LIKE ? OR a.application_id LIKE ?)')
@@ -35,9 +65,13 @@ async function handleApi(request, env, url) {
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
     const query = `
       SELECT a.application_id, a.full_name, a.email, a.phone, a.current_location,
-             d.application_status, d.submitted_at, COUNT(p.file_id) AS photo_count
+             COALESCE(d.application_status, 'orphaned') AS application_status, d.submitted_at,
+             datetime(d.submitted_at, '+6 months') AS retention_due_at,
+             CASE WHEN datetime(d.submitted_at, '+6 months') <= datetime('now', '+30 days') THEN 1 ELSE 0 END AS retention_warning,
+             CASE WHEN datetime(d.submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS retention_overdue,
+             COUNT(p.file_id) AS photo_count
       FROM applicants a
-      JOIN applicant_details d ON d.application_id = a.application_id
+      LEFT JOIN applicant_details d ON d.application_id = a.application_id
       LEFT JOIN applicant_photos p ON p.application_id = a.application_id
       ${where}
       GROUP BY a.application_id, a.full_name, a.email, a.phone, a.current_location,
@@ -55,7 +89,9 @@ async function handleApi(request, env, url) {
     const application = await env.DB.prepare(`
       SELECT a.application_id, a.full_name, a.email, a.phone, a.current_location,
              d.responses_json, d.application_status, d.submitted_at,
-             d.admin_notes, d.reviewed_at, d.reviewed_by
+             d.admin_notes, d.reviewed_at, d.reviewed_by,
+             datetime(d.submitted_at, '+6 months') AS retention_due_at,
+             CASE WHEN datetime(d.submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS retention_overdue
       FROM applicants a
       JOIN applicant_details d ON d.application_id = a.application_id
       WHERE a.application_id = ?
@@ -70,7 +106,9 @@ async function handleApi(request, env, url) {
     `).bind(applicationId).all()
 
     const { responses_json: responsesJson, ...summary } = application
-    return Response.json({ application: { ...summary, responses: parseResponses(responsesJson), photos: photos.results } })
+    return Response.json({ application: { ...summary, responses: parseResponses(responsesJson), photos: signPhotoUrls(env, photos.results) } }, {
+      headers: { 'Cache-Control': 'no-store' },
+    })
   }
 
   if (match && request.method === 'PATCH') {
@@ -97,6 +135,14 @@ async function handleApi(request, env, url) {
       .first()
     if (!existing) return Response.json({ error: 'Application not found.' }, { status: 404 })
 
+    const photos = await env.DB.prepare('SELECT file_id FROM applicant_photos WHERE application_id = ?')
+      .bind(applicationId).all()
+    try {
+      await deleteImageKitFiles(env, photos.results.map((photo) => photo.file_id))
+    } catch (error) {
+      console.error('ImageKit deletion failed', error)
+      return Response.json({ error: 'Photos could not be removed from storage. Database records were kept; please retry.' }, { status: 502 })
+    }
     await env.DB.batch([
       env.DB.prepare('DELETE FROM applicant_photos WHERE application_id = ?').bind(applicationId),
       env.DB.prepare('DELETE FROM applicant_details WHERE application_id = ?').bind(applicationId),

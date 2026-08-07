@@ -1,279 +1,373 @@
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
+import { applicationSections, declarationFields, photoFields } from './applicationForm.js'
 
-    if (url.pathname.startsWith("/api/") && request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: { Allow: "POST, OPTIONS" } });
-    }
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
+const UPLOAD_TOKEN_TTL_MS = 60 * 60 * 1000
+const MAX_JSON_BYTES = 100_000
+const IMAGE_SIGNATURES = [
+  { mime: 'image/png', test: (bytes) => bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a },
+  { mime: 'image/jpeg', test: (bytes) => bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff },
+]
 
-    // DB test
-    if (url.pathname === "/api/db-test") {
-      const result = await env.DB
-        .prepare("SELECT 1 AS ok")
-        .first();
+const answerFields = [...applicationSections.flatMap((section) => section.fields), ...declarationFields]
+const answerFieldMap = new Map(answerFields.map((field) => [field.key, field]))
+const photoFieldMap = new Map(photoFields.map((field) => [field.key, field]))
 
-      return Response.json({
-        database: "connected",
-        result
-      });
-    }
+function json(data, init = {}) {
+  const headers = new Headers(init.headers)
+  headers.set('Cache-Control', 'no-store')
+  return Response.json(data, { ...init, headers })
+}
 
-    // Prevent repeat applications using the same email address
-    if (url.pathname === "/api/check-email" && request.method === "POST") {
-      try {
-        const body = await request.json();
-        const email = String(body.email ?? "").trim().toLowerCase();
-        if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(email)) {
-          return Response.json({ success: false, error: "Please enter a valid email address." }, { status: 400 });
-        }
-        const applicant = await env.DB
-          .prepare("SELECT application_id FROM applicants WHERE LOWER(email) = LOWER(?) LIMIT 1")
-          .bind(email)
-          .first();
-        return Response.json({ success: true, exists: Boolean(applicant) });
-      } catch (error) {
-        console.error("Email check failed", error);
-        return Response.json({ success: false, error: "Unable to verify email address." }, { status: 500 });
-      }
-    }
+function clientIp(request) {
+  return request.headers.get('CF-Connecting-IP') || 'unknown'
+}
 
-    // Applicant submission
-    if (url.pathname === "/api/apply" && request.method === "POST") {
-      try {
-        const body = await request.json();
-        const answers = body.answers && typeof body.answers === "object" ? body.answers : body;
-        const fullName = String(body.full_name ?? "").trim();
-        const email = String(body.email ?? "").trim().toLowerCase();
-        const phone = String(body.phone ?? "").trim();
-        const location = String(body.current_location ?? "").trim();
-        const responsesJson = JSON.stringify(answers);
+async function enforceRateLimit(binding, key) {
+  if (!binding) return true
+  const result = await binding.limit({ key })
+  return result.success
+}
 
-        if (!fullName || fullName.length > 100 || !email || email.length > 254 ||
-            !/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(email) || !phone || phone.length > 30 ||
-            !location || location.length > 100 || responsesJson.length > 100000) {
-          return Response.json({ success: false, error: "Please provide valid information in every field." }, { status: 400 });
-        }
+function rateLimited(route) {
+  console.warn('security.rate_limited', { route })
+  return json({ success: false, error: 'Too many attempts. Please wait a minute and try again.' }, {
+    status: 429,
+    headers: { 'Retry-After': '60' },
+  })
+}
 
-        const applicantAge = Number(answers.age);
-        if (body.answers && (answers.age_gate !== "Yes" || answers.voluntary_application !== "Yes" ||
-            !Number.isFinite(applicantAge) || applicantAge < 18 || applicantAge > 30 || answers.gender !== "Female" ||
-            !answers.accurate_information?.length ||
-            !answers.no_guarantee_acknowledged?.length || !answers.whatsapp_consent?.length)) {
-          return Response.json({ success: false, error: "Required declarations are incomplete." }, { status: 400 });
-        }
-        const existingApplicant = await env.DB
-          .prepare("SELECT application_id FROM applicants WHERE LOWER(email) = LOWER(?) LIMIT 1")
-          .bind(email)
-          .first();
-        if (existingApplicant) {
-          return Response.json(
-            { success: false, already_submitted: true, error: "An application has already been submitted with this email address." },
-            { status: 409 }
-          );
-        }
-        const dateStamp = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-        const randomBytes = crypto.getRandomValues(new Uint8Array(3));
-        const shortCode = Array.from(randomBytes, (byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase();
-        const applicationId = `NEXA-${dateStamp}-${shortCode}`;
+function base64Url(bytes) {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
 
-        const applicantInsert = env.DB.prepare(`
-            INSERT INTO applicants (
-              application_id,
-              full_name,
-              email,
-              phone,
-              current_location
-            )
-            VALUES (?, ?, ?, ?, ?)
-          `).bind(
-            applicationId,
-            fullName,
-            email,
-            phone,
-            location
-          );
+async function sha256(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
 
-        if (body.answers) {
-          const detailsInsert = env.DB.prepare(`
-            INSERT INTO applicant_details (
-              application_id,
-              responses_json,
-              application_status
-            ) VALUES (?, ?, 'submitted')
-          `).bind(applicationId, responsesJson);
-          await env.DB.batch([applicantInsert, detailsInsert]);
-        } else {
-          await applicantInsert.run();
-        }
+function createUploadToken() {
+  return base64Url(crypto.getRandomValues(new Uint8Array(32)))
+}
 
-        return Response.json(
-          {
-            success: true,
-            application_id: applicationId
-          },
-          { status: 201 }
-        );
-      } catch (error) {
-        console.error("Application submission failed", error);
-        return Response.json(
-          {
-            success: false,
-            error: "Unable to submit application"
-          },
-          { status: 500 }
-        );
-      }
-    }
+function bearerToken(request) {
+  const authorization = request.headers.get('Authorization') || ''
+  return authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
+}
 
-    // ImageKit upload test
-    if (url.pathname === "/api/upload" && request.method === "POST") {
+async function requireUploadAccess(request, env, applicationId, includeSubmitted = false) {
+  const token = bearerToken(request)
+  if (!token || token.length > 200) return null
+  const tokenHash = await sha256(token)
+  return env.DB.prepare(`
+    SELECT a.application_id, a.full_name, a.email, d.application_status, d.confirmation_sent_at
+    FROM applicants a
+    JOIN applicant_details d ON d.application_id = a.application_id
+    WHERE a.application_id = ?
+      AND ${includeSubmitted ? "d.application_status IN ('pending_upload', 'submitted')" : "d.application_status = 'pending_upload'"}
+      AND d.upload_token_hash = ?
+      AND d.upload_token_expires_at > CURRENT_TIMESTAMP
+  `).bind(applicationId, tokenHash).first()
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character])
+}
+
+async function sendConfirmationEmail(env, applicant) {
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false
+  const replyTo = env.EMAIL_REPLY_TO || 'itszinniraahmad@gmail.com'
+  const subject = `Nexa Model application received — ${applicant.application_id}`
+  const text = `Hi ${applicant.full_name},\n\nYour Nexa Model application and photographs have been received. Your reference is ${applicant.application_id}. Submission does not guarantee shortlisting, training completion or an assignment. If shortlisted, Nexa Model will contact you through WhatsApp.\n\nPermohonan dan gambar anda telah diterima. Rujukan anda ialah ${applicant.application_id}. Penghantaran tidak menjamin pemilihan, tamat latihan atau tugasan. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.\n\nPrivacy enquiries / Pertanyaan privasi: ${replyTo}`
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: env.EMAIL_FROM,
+      to: [applicant.email],
+      reply_to: replyTo,
+      subject,
+      text,
+      html: `<p>Hi ${escapeHtml(applicant.full_name)},</p><p>Your Nexa Model application and photographs have been received.</p><p><strong>Reference: ${escapeHtml(applicant.application_id)}</strong></p><p>Submission does not guarantee shortlisting, training completion or an assignment. If shortlisted, Nexa Model will contact you through WhatsApp.</p><hr><p>Permohonan dan gambar anda telah diterima.</p><p><strong>Rujukan: ${escapeHtml(applicant.application_id)}</strong></p><p>Penghantaran tidak menjamin pemilihan, tamat latihan atau tugasan. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
+    }),
+  })
+  return response.ok
+}
+
+async function verifyTurnstile(request, env, token) {
+  if (!env.TURNSTILE_SECRET_KEY || !token || typeof token !== 'string' || token.length > 2048) return false
   try {
-    const formData = await request.formData();
-
-    const file = formData.get("file");
-    const applicationId = formData.get("application_id");
-    const photoType = formData.get("photo_type") ?? null;
-
-    if (!file || !applicationId) {
-      return Response.json(
-        {
-          success: false,
-          error: "file and application_id are required"
-        },
-        { status: 400 }
-      );
-    }
-
-    if (!(file instanceof File) || !/\.(png|jpe?g|raw)$/i.test(file.name) || file.size > 10 * 1024 * 1024) {
-      return Response.json(
-        { success: false, error: "Photo must be a PNG, JPG, JPEG or RAW image under 10 MB." },
-        { status: 400 }
-      );
-    }
-
-    if (typeof photoType !== "string" || !/^[a-z0-9_]{1,80}$/.test(photoType)) {
-      return Response.json({ success: false, error: "Invalid photo category." }, { status: 400 });
-    }
-
-    const duplicatePhoto = await env.DB
-      .prepare(`
-        SELECT file_id
-        FROM applicant_photos
-        WHERE application_id = ? AND LOWER(file_name) = LOWER(?)
-        LIMIT 1
-      `)
-      .bind(applicationId, file.name)
-      .first();
-
-    if (duplicatePhoto) {
-      return Response.json(
-        { success: false, error: "A photo with this filename has already been uploaded for this application." },
-        { status: 409 }
-      );
-    }
-
-    if (!env.IMAGEKIT_PRIVATE_KEY) {
-      console.error("IMAGEKIT_PRIVATE_KEY is not configured");
-      return Response.json({ success: false, error: "Photo service is not configured." }, { status: 503 });
-    }
-
-    const applicant = await env.DB
-      .prepare(`
-        SELECT application_id
-        FROM applicants
-        WHERE application_id = ?
-      `)
-      .bind(applicationId)
-      .first();
-
-    if (!applicant) {
-      return Response.json(
-        {
-          success: false,
-          error: "Applicant not found"
-        },
-        { status: 404 }
-      );
-    }
-
-    const uploadForm = new FormData();
-
-    uploadForm.append("file", file);
-    uploadForm.append(
-      "fileName",
-      file.name || `photo-${Date.now()}.jpg`
-    );
-
-    uploadForm.append(
-      "folder",
-      `/nexa/applicants/${applicationId}`
-    );
-
-    const auth = btoa(`${env.IMAGEKIT_PRIVATE_KEY}:`);
-
-    const response = await fetch(
-      "https://upload.imagekit.io/api/v1/files/upload",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${auth}`
-        },
-        body: uploadForm
-      }
-    );
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      return Response.json(
-        {
-          success: false,
-          error: "Image provider rejected the upload."
-        },
-        { status: response.status }
-      );
-    }
-
-    await env.DB
-      .prepare(`
-        INSERT INTO applicant_photos (
-          application_id,
-          file_id,
-          file_name,
-          file_url,
-          photo_type
-        )
-        VALUES (?, ?, ?, ?, ?)
-      `)
-      .bind(
-        applicationId,
-        result.fileId,
-        result.name,
-        result.url,
-        photoType
-      )
-      .run();
-
-    return Response.json({
-      success: true,
-      application_id: applicationId,
-      file_id: result.fileId,
-      file_name: result.name,
-      file_url: result.url
-    });
+    const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        secret: env.TURNSTILE_SECRET_KEY,
+        response: token,
+        remoteip: request.headers.get('CF-Connecting-IP') || undefined,
+        idempotency_key: crypto.randomUUID(),
+      }),
+    })
+    const result = await response.json()
+    return response.ok && result.success === true
   } catch (error) {
-    console.error("Photo upload failed", error);
-    return Response.json(
-      {
-        success: false,
-        error: "Upload failed"
-      },
-      { status: 500 }
-    );
+    console.error('Turnstile validation failed', error)
+    return false
   }
 }
 
-    // React frontend
-    return env.ASSETS.fetch(request);
+function validateAnswer(field, value) {
+  if (field.required && (value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length))) {
+    return `${field.label} is required.`
   }
-};
+  if (value === undefined || value === null || value === '') return null
+
+  if (field.type === 'checkbox') {
+    if (!field.required && Array.isArray(value) && !value.length) return null
+    if (!Array.isArray(value) || !value.length || value.some((item) => typeof item !== 'string' || !field.options.includes(item))) {
+      return `${field.label} contains an invalid selection.`
+    }
+    return null
+  }
+  if (field.type === 'radio' || field.type === 'select') {
+    if (typeof value !== 'string' || !field.options.includes(value)) return `${field.label} contains an invalid selection.`
+    return null
+  }
+  if (field.type === 'scale' || field.type === 'number') {
+    const number = Number(value)
+    if (!Number.isFinite(number) || number < field.min || number > field.max) return `${field.label} is outside the allowed range.`
+    return null
+  }
+  if (typeof value !== 'string') return `${field.label} must be text.`
+  if (field.required && !value.trim()) return `${field.label} is required.`
+  const maxLength = field.maxLength || (field.type === 'textarea' ? 2000 : 500)
+  if (value.trim().length > maxLength) return `${field.label} is too long.`
+  if (field.type === 'email' && !EMAIL_PATTERN.test(value.trim())) return `${field.label} is invalid.`
+  if (field.type === 'url' && value.trim()) {
+    try {
+      const url = new URL(value.trim())
+      if (!['http:', 'https:'].includes(url.protocol)) return `${field.label} must use http or https.`
+    } catch {
+      return `${field.label} is invalid.`
+    }
+  }
+  return null
+}
+
+function validateAnswers(answers) {
+  if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return 'Application answers are invalid.'
+  const unknown = Object.keys(answers).find((key) => !answerFieldMap.has(key))
+  if (unknown) return 'Application contains an unknown field.'
+  for (const field of answerFields) {
+    const error = validateAnswer(field, answers[field.key])
+    if (error) return error
+  }
+  if (answers.age_gate !== 'Yes' || answers.voluntary_application !== 'Yes') return 'Applicant eligibility requirements are not met.'
+  return null
+}
+
+function parsePhotoSlot(photoType) {
+  if (typeof photoType !== 'string') return null
+  const match = photoType.match(/^([a-z0-9_]+)_(\d+)$/)
+  if (!match) return null
+  const field = photoFieldMap.get(match[1])
+  const index = Number(match[2])
+  if (!field || index < 1 || index > field.max) return null
+  return { field, index, type: `${field.key}_${index}` }
+}
+
+async function detectImageMime(file) {
+  const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer())
+  return IMAGE_SIGNATURES.find((signature) => signature.test(bytes))?.mime || null
+}
+
+async function deleteImageKitFiles(env, applicationId) {
+  if (!env.IMAGEKIT_PRIVATE_KEY) return
+  const photos = await env.DB.prepare('SELECT file_id FROM applicant_photos WHERE application_id = ?')
+    .bind(applicationId).all()
+  const authorization = `Basic ${btoa(`${env.IMAGEKIT_PRIVATE_KEY}:`)}`
+  await Promise.allSettled(photos.results.map((photo) => fetch(`https://api.imagekit.io/v1/files/${encodeURIComponent(photo.file_id)}`, {
+    method: 'DELETE',
+    headers: { Authorization: authorization },
+  })))
+}
+
+async function handleApply(request, env) {
+  if (!await enforceRateLimit(env.APPLY_RATE_LIMITER, `${clientIp(request)}:apply`)) return rateLimited('apply')
+  try {
+    const body = await request.json()
+    const answers = body.answers
+    const validationError = validateAnswers(answers)
+    if (validationError) return json({ success: false, error: validationError }, { status: 400 })
+    const responsesJson = JSON.stringify(answers)
+    if (new TextEncoder().encode(responsesJson).length > MAX_JSON_BYTES) return json({ success: false, error: 'Application is too large.' }, { status: 400 })
+
+    const fullName = String(answers.full_name).trim()
+    const email = String(answers.email).trim().toLowerCase()
+    const phone = String(answers.phone).trim()
+    const location = String(answers.current_location).trim()
+    if (!await verifyTurnstile(request, env, body.turnstile_token)) {
+      return json({ success: false, error: 'Security verification failed. Please refresh the verification and try again.' }, { status: 400 })
+    }
+
+    const existing = await env.DB.prepare(`
+      SELECT a.application_id, d.application_status, d.upload_token_expires_at
+      FROM applicants a JOIN applicant_details d ON d.application_id = a.application_id
+      WHERE a.email = ? COLLATE NOCASE LIMIT 1
+    `).bind(email).first()
+    if (existing && existing.application_status !== 'pending_upload') {
+      return json({ success: false, error: 'A new application could not be started. If you previously applied, your application remains on file. Contact Nexa Model through its official direct messages if you need help.' }, { status: 409 })
+    }
+    if (existing && existing.upload_token_expires_at && new Date(`${existing.upload_token_expires_at}Z`).getTime() > Date.now()) {
+      return json({ success: false, error: 'An upload session is already active for this email. Please continue from the original browser or try again after it expires.' }, { status: 409 })
+    }
+
+    const uploadToken = createUploadToken()
+    const uploadTokenHash = await sha256(uploadToken)
+    const uploadExpiresAt = new Date(Date.now() + UPLOAD_TOKEN_TTL_MS).toISOString().replace('T', ' ').replace('Z', '')
+    let applicationId = existing?.application_id
+
+    if (existing) {
+      await deleteImageKitFiles(env, applicationId)
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM applicant_photos WHERE application_id = ?').bind(applicationId),
+        env.DB.prepare(`UPDATE applicants SET full_name = ?, phone = ?, current_location = ? WHERE application_id = ?`)
+          .bind(fullName, phone, location, applicationId),
+        env.DB.prepare(`UPDATE applicant_details SET responses_json = ?, application_status = 'pending_upload', submitted_at = CURRENT_TIMESTAMP, upload_token_hash = ?, upload_token_expires_at = ? WHERE application_id = ?`)
+          .bind(responsesJson, uploadTokenHash, uploadExpiresAt, applicationId),
+      ])
+    } else {
+      applicationId = crypto.randomUUID()
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO applicants (application_id, full_name, email, phone, current_location) VALUES (?, ?, ?, ?, ?)`)
+          .bind(applicationId, fullName, email, phone, location),
+        env.DB.prepare(`INSERT INTO applicant_details (application_id, responses_json, application_status, upload_token_hash, upload_token_expires_at) VALUES (?, ?, 'pending_upload', ?, ?)`)
+          .bind(applicationId, responsesJson, uploadTokenHash, uploadExpiresAt),
+      ])
+    }
+
+    console.log('application.pending_upload_created', { applicationId })
+    return json({ success: true, application_id: applicationId, upload_token: uploadToken, upload_expires_at: `${uploadExpiresAt}Z` }, { status: 201 })
+  } catch (error) {
+    console.error('Application submission failed', error)
+    return json({ success: false, error: 'Unable to save application.' }, { status: 500 })
+  }
+}
+
+async function handleUpload(request, env) {
+  if (!await enforceRateLimit(env.UPLOAD_RATE_LIMITER, `${clientIp(request)}:upload`)) return rateLimited('upload')
+  try {
+    const formData = await request.formData()
+    const file = formData.get('file')
+    const applicationId = String(formData.get('application_id') || '')
+    const slot = parsePhotoSlot(formData.get('photo_type'))
+    if (!(file instanceof File) || !applicationId || !slot) {
+      return json({ success: false, error: 'A valid file, application and photo category are required.' }, { status: 400 })
+    }
+    if (!await requireUploadAccess(request, env, applicationId)) {
+      return json({ success: false, error: 'Upload session is invalid or expired.' }, { status: 403 })
+    }
+    if (file.size <= 0 || file.size > 10 * 1024 * 1024) {
+      return json({ success: false, error: 'Photo must be under 10 MB.' }, { status: 400 })
+    }
+    const detectedMime = await detectImageMime(file)
+    if (!detectedMime) {
+      return json({ success: false, error: 'Only genuine PNG and JPEG images are accepted.' }, { status: 400 })
+    }
+    const occupied = await env.DB.prepare('SELECT file_id FROM applicant_photos WHERE application_id = ? AND photo_type = ? LIMIT 1')
+      .bind(applicationId, slot.type).first()
+    if (occupied) return json({ success: true, application_id: applicationId, photo_type: slot.type, already_uploaded: true })
+    if (!env.IMAGEKIT_PRIVATE_KEY) return json({ success: false, error: 'Photo service is not configured.' }, { status: 503 })
+
+    const safeExtension = detectedMime === 'image/png' ? 'png' : 'jpg'
+    const uploadForm = new FormData()
+    uploadForm.append('file', new File([file], `${slot.type}.${safeExtension}`, { type: detectedMime }))
+    uploadForm.append('fileName', `${slot.type}.${safeExtension}`)
+    uploadForm.append('folder', `/nexa/applicants/${applicationId}`)
+    uploadForm.append('useUniqueFileName', 'true')
+    uploadForm.append('isPrivateFile', 'true')
+    const response = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
+      method: 'POST',
+      headers: { Authorization: `Basic ${btoa(`${env.IMAGEKIT_PRIVATE_KEY}:`)}` },
+      body: uploadForm,
+    })
+    const result = await response.json()
+    if (!response.ok) return json({ success: false, error: 'Image provider rejected the upload.' }, { status: 502 })
+
+    try {
+      await env.DB.prepare(`INSERT INTO applicant_photos (application_id, file_id, file_name, file_url, photo_type) VALUES (?, ?, ?, ?, ?)`)
+        .bind(applicationId, result.fileId, result.name, result.url, slot.type).run()
+    } catch (error) {
+      await fetch(`https://api.imagekit.io/v1/files/${encodeURIComponent(result.fileId)}`, {
+        method: 'DELETE', headers: { Authorization: `Basic ${btoa(`${env.IMAGEKIT_PRIVATE_KEY}:`)}` },
+      }).catch(() => {})
+      throw error
+    }
+    return json({ success: true, application_id: applicationId, photo_type: slot.type })
+  } catch (error) {
+    console.error('Photo upload failed', error)
+    return json({ success: false, error: 'Upload failed.' }, { status: 500 })
+  }
+}
+
+async function handleFinalize(request, env) {
+  if (!await enforceRateLimit(env.APPLY_RATE_LIMITER, `${clientIp(request)}:finalize`)) return rateLimited('finalize')
+  try {
+    const body = await request.json()
+    const applicationId = String(body.application_id || '')
+    const applicant = await requireUploadAccess(request, env, applicationId, true)
+    if (!applicant) {
+      return json({ success: false, error: 'Upload session is invalid or expired.' }, { status: 403 })
+    }
+    if (applicant.application_status === 'pending_upload') {
+      const result = await env.DB.prepare(`SELECT photo_type, COUNT(*) AS count FROM applicant_photos WHERE application_id = ? GROUP BY photo_type`)
+        .bind(applicationId).all()
+      const uploadedTypes = new Set(result.results.map((row) => row.photo_type))
+      for (const field of photoFields) {
+        for (let index = 1; index <= field.min; index += 1) {
+          if (!uploadedTypes.has(`${field.key}_${index}`)) {
+            return json({ success: false, error: `${field.label} is incomplete.` }, { status: 400 })
+          }
+        }
+      }
+      const maxPhotos = photoFields.reduce((sum, field) => sum + field.max, 0)
+      if (result.results.reduce((sum, row) => sum + Number(row.count), 0) > maxPhotos) {
+        return json({ success: false, error: 'Application contains too many photos.' }, { status: 400 })
+      }
+      await env.DB.prepare(`UPDATE applicant_details SET application_status = 'submitted', submitted_at = CURRENT_TIMESTAMP WHERE application_id = ? AND application_status = 'pending_upload'`)
+        .bind(applicationId).run()
+      console.log('application.submitted', { applicationId })
+    }
+
+    let emailSent = Boolean(applicant.confirmation_sent_at)
+    if (!emailSent) {
+      try {
+        emailSent = await sendConfirmationEmail(env, applicant)
+        if (emailSent) await env.DB.prepare('UPDATE applicant_details SET confirmation_sent_at = CURRENT_TIMESTAMP WHERE application_id = ?').bind(applicationId).run()
+        else console.warn('application.confirmation_email_not_sent', { applicationId })
+      } catch (error) {
+        console.error('Confirmation email failed', error)
+      }
+    }
+    return json({ success: true, application_id: applicationId, email_sent: emailSent })
+  } catch (error) {
+    console.error('Application finalization failed', error)
+    return json({ success: false, error: 'Unable to finalize application.' }, { status: 500 })
+  }
+}
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url)
+    if (url.pathname === '/api/config' && request.method === 'GET') {
+      return json({ turnstile_site_key: env.TURNSTILE_SITE_KEY || '' })
+    }
+    if (url.pathname === '/api/apply' && request.method === 'POST') return handleApply(request, env)
+    if (url.pathname === '/api/upload' && request.method === 'POST') return handleUpload(request, env)
+    if (url.pathname === '/api/finalize' && request.method === 'POST') return handleFinalize(request, env)
+    if (url.pathname.startsWith('/api/')) return json({ success: false, error: 'Not found.' }, { status: 404 })
+    return env.ASSETS.fetch(request)
+  },
+}
+
+export { detectImageMime, parsePhotoSlot, validateAnswers }

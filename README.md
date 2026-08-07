@@ -38,6 +38,8 @@ The development URL is normally `http://localhost:5173`.
 - `/` — public website
 - `/login` — demo login
 - `/portal` — talent dashboard
+- `/apply` — public model application form
+- `/privacy` — bilingual Privacy Notice
 
 ## Private application review site
 
@@ -98,9 +100,51 @@ Apply the D1 migration once before deploying this version:
 npx wrangler d1 execute nexa-production --remote --file migrations/0001_applicant_details.sql
 ```
 
+### Public form security
+
+Before exposing `/apply` publicly, apply the security migration:
+
+```powershell
+npx wrangler d1 execute nexa-production --remote --file migrations/0003_public_submission_security.sql
+npx wrangler d1 execute nexa-production --remote --file migrations/0004_confirmation_email.sql
+```
+
+Create a Cloudflare Turnstile widget in Managed mode for the production hostname, then configure
+both keys as Worker secrets. The site key is public by design, but storing both values through the
+same deployment mechanism avoids putting environment-specific configuration in Git.
+
+```powershell
+npx wrangler secret put TURNSTILE_SITE_KEY
+npx wrangler secret put TURNSTILE_SECRET_KEY
+```
+
+For local development, add the same names to `.dev.vars`. The Worker verifies every application
+with Turnstile, applies Cloudflare rate-limit bindings, issues a one-hour application-scoped upload
+token, validates PNG/JPEG signatures, enforces every form field and photo slot server-side, and only
+changes an application from `pending_upload` to `submitted` after all required photos are present.
+New candidate photos are marked private in ImageKit. The admin Worker returns five-minute signed
+URLs and therefore needs its own copy of the ImageKit private key:
+
+```powershell
+npx wrangler secret put IMAGEKIT_PRIVATE_KEY --config wrangler.admin.jsonc
+```
+
+Run the security regression tests with:
+
+```powershell
+npm test
+```
+
+The form requires explicit acceptance of the bilingual Privacy Notice. Nexa Model keeps submitted
+candidate records for up to six months. The admin review list starts showing a retention warning
+30 days before the review date; deletion remains a deliberate staff action and removes both the D1
+record and its ImageKit files.
+
 ## Application confirmation email
 
-The frontend calls `/api/finalize` after every applicant photo has uploaded. The Worker then sends a bilingual confirmation email through Resend. An email outage does not invalidate an application that is already stored.
+The frontend calls `/api/finalize` after every applicant photo has uploaded. Finalization is
+idempotent: retrying it does not create another application, and the confirmation email is recorded
+in D1 so it is not intentionally sent twice.
 
 Verify a sending domain in Resend, then configure the Worker:
 
@@ -114,7 +158,7 @@ Suggested values:
 
 ```text
 EMAIL_FROM=Nexa Model <applications@updates.yourdomain.com>
-EMAIL_REPLY_TO=support@yourdomain.com
+EMAIL_REPLY_TO=itszinniraahmad@gmail.com
 ```
 
 For local development, put the same names in `.dev.vars`. Never commit the Resend API key.

@@ -276,6 +276,23 @@ em { font-family: 'Playfair Display', serif; font-weight: 500; }
 .section-rate-list strong small { color: var(--muted); font-size: 12px; font-weight: 400; }
 .section-rate-list > p { margin-top: 20px; color: var(--muted); }
 .upload-progress-panel { margin-top: 38px; padding: 24px; border: 1px solid var(--line); }
+.turnstile-field { min-height: 70px; margin-top: 28px; }
+.turnstile-field .field-warning { display: block; }
+.turnstile-recovery { margin-top: 10px; }
+.turnstile-recovery .underlined-button { margin-top: 8px; font-size: 13px; }
+.privacy-form-link { margin-top: 18px; }
+.privacy-form-link a, .privacy-content a { color: inherit; text-underline-offset: 3px; }
+.privacy-page { min-height: 100vh; background: var(--paper); color: var(--ink); }
+.privacy-header { padding: 28px clamp(22px, 5vw, 72px); display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); }
+.privacy-content { width: min(820px, calc(100% - 44px)); margin: auto; padding: 70px 0 100px; }
+.privacy-content h1 { margin: 8px 0 0; font-size: clamp(52px, 8vw, 88px); line-height: .95; }
+.privacy-bm-title { margin: 10px 0 34px; color: var(--muted); font-size: 24px; font-style: italic; }
+.privacy-lead, .privacy-content > .bm-text { font-size: 18px; line-height: 1.7; }
+.privacy-content section { margin-top: 44px; padding-top: 30px; border-top: 1px solid var(--line); }
+.privacy-content section h2 { margin: 0; font-size: 25px; }
+.privacy-content section h3 { margin: 5px 0 16px; color: var(--muted); font-size: 17px; font-style: italic; font-weight: 400; }
+.privacy-content section p { line-height: 1.75; }
+.privacy-content > small { display: block; margin-top: 50px; color: var(--muted); }
 .upload-progress-row + .upload-progress-row { margin-top: 18px; }
 .upload-progress-row > div { margin-bottom: 7px; display: flex; justify-content: space-between; gap: 20px; font-size: 13px; }
 .upload-progress-row b { color: var(--muted); text-transform: capitalize; }

@@ -70,7 +70,10 @@ export async function requireAdmin(request, env) {
       .split(',')
       .map((item) => item.trim().toLowerCase())
       .filter(Boolean)
-    if (!email || (allowlist.length && !allowlist.includes(email))) {
+    if (!allowlist.length) {
+      return { error: Response.json({ error: 'Admin allowlist is not configured.' }, { status: 503 }) }
+    }
+    if (!email || !allowlist.includes(email)) {
       return { error: Response.json({ error: 'You are not authorized to review applications.' }, { status: 403 }) }
     }
 

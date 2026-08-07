@@ -2,6 +2,7 @@
   "name": "nexa-model-admin",
   "main": "./admin/worker.js",
   "compatibility_date": "2026-08-06",
+  "compatibility_flags": ["nodejs_compat"],
   "routes": [
     {
       "pattern": "onlyadmin.nexa-model.com",
@@ -14,10 +15,16 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/admin/*"]
   },
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": true },
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 }
+  },
   "vars": {
     "ACCESS_TEAM_DOMAIN": "mute-shape-c1b3.cloudflareaccess.com",
     "ACCESS_AUD": "037437dc99388742064478449072b915bc3b19d0c2d327646e01d20c2bce3bc1",
-    "ADMIN_EMAILS": "itszinniraahmad@gmail.com"
+    "ADMIN_EMAILS": "itszinniraahmad@gmail.com",
+    "IMAGEKIT_URL_ENDPOINT": "https://ik.imagekit.io/4wqtbbxlw"
   },
   "d1_databases": [
     {

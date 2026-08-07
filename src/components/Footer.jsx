@@ -1,4 +1,5 @@
 import officialLogo from '../assets/images/official_logo_2Kpx.png'
+import { Link } from '../router'
 
 export default function Footer() {
   return (
@@ -11,7 +12,8 @@ export default function Footer() {
         <a href="#about">About</a>
         <a href="#talents">Talents</a>
         <a href="#brands">Brands</a>
-        <a href="mailto:hello@nexamodel.example">Contact</a>
+        <Link to="/privacy">Privacy</Link>
+        <a href="mailto:itszinniraahmad@gmail.com">Contact</a>
       </div>
       <p className="copyright">© 2026 Nexa Model. All rights reserved.</p>
     </footer>

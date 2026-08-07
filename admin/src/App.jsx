@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, ExternalLink, Image, LoaderCircle, LogOut, Mail, MapPin, Moon, Phone, Search, Sun, Trash2, Users, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Clock, ExternalLink, Image, LoaderCircle, LogOut, Mail, MapPin, Moon, Phone, Search, Sun, Trash2, Users, X } from 'lucide-react'
 import { applicationSections, declarationFields, photoFields } from '../../src/applicationForm.js'
 
 const statusLabels = { submitted: 'Submitted', reviewing: 'Reviewing', shortlisted: 'Shortlisted', rejected: 'Rejected' }
@@ -41,19 +41,19 @@ async function api(path, options) {
 }
 
 function StatusBadge({ status }) {
-  return <span className={`status status-${status}`}>{statusLabels[status] || status}</span>
+  return <span className={`status status-${status}`}>{status === 'orphaned' ? 'Cleanup needed' : (statusLabels[status] || status)}</span>
 }
 
 function ApplicationList({ applications, loading, onSelect, onDelete }) {
   if (loading) return <div className="empty"><LoaderCircle className="spin" /> Loading applications…</div>
   if (!applications.length) return <div className="empty"><Users /> No applications match your filters.</div>
   return <div className="application-list">
-    {applications.map((item) => <div className="application-row" key={item.application_id} role="button" tabIndex="0" onClick={() => onSelect(item.application_id)} onKeyDown={(event) => { if (event.key === 'Enter') onSelect(item.application_id) }}>
+    {applications.map((item) => <div className={`application-row${item.retention_warning ? ' retention-row' : ''}${item.application_status === 'orphaned' ? ' orphaned-row' : ''}`} key={item.application_id} role={item.application_status === 'orphaned' ? undefined : 'button'} tabIndex={item.application_status === 'orphaned' ? undefined : '0'} onClick={() => { if (item.application_status !== 'orphaned') onSelect(item.application_id) }} onKeyDown={(event) => { if (event.key === 'Enter' && item.application_status !== 'orphaned') onSelect(item.application_id) }}>
       <div className="applicant-primary"><strong>{item.full_name}</strong><span>{item.email}</span></div>
       <span className="location">{item.current_location}</span>
       <span className="photo-count"><Image size={15} /> {item.photo_count}</span>
       <StatusBadge status={item.application_status} />
-      <time>{formatDate(item.submitted_at)}</time>
+      <time className={item.retention_overdue ? 'retention-overdue' : ''} title={`Review for deletion by ${formatDate(item.retention_due_at)}`}>{item.retention_warning ? <Clock size={13} /> : null}{formatDate(item.submitted_at)}</time>
       <button className="delete-row-button" title={`Delete ${item.full_name}`} aria-label={`Delete ${item.full_name}`} onClick={(event) => { event.stopPropagation(); onDelete(item) }}><Trash2 size={17} /></button>
     </div>)}
   </div>
@@ -65,7 +65,7 @@ function DeleteDialog({ application, deleting, error, onCancel, onConfirm }) {
       <button className="dialog-close" onClick={onCancel} disabled={deleting} aria-label="Close"><X size={18} /></button>
       <div className="dialog-icon"><Trash2 size={22} /></div>
       <h2 id="delete-title">Are you sure you want to delete?</h2>
-      <p><strong>{application.full_name}</strong> and all application records will be permanently removed from the database.</p>
+      <p><strong>{application.full_name}</strong>, all application records and every stored ImageKit photo will be permanently removed.{application.application_status === 'orphaned' ? ' This is an incomplete legacy record marked for cleanup.' : ''}</p>
       {error && <p className="form-error">{error}</p>}
       <div className="dialog-actions"><button className="cancel-button" onClick={onCancel} disabled={deleting}>Cancel</button><button className="delete-confirm-button" onClick={onConfirm} disabled={deleting}>{deleting ? 'Deleting…' : 'Yes'}</button></div>
     </section>
@@ -118,7 +118,7 @@ function Detail({ applicationId, onBack, onUpdated }) {
   return <>
     <button className="back-button" onClick={onBack}><ArrowLeft size={17} /> All applications</button>
     <section className="detail-heading">
-      <div><p className="eyebrow">{record.application_id}</p><h2>{record.full_name}</h2><p>Submitted {formatDate(record.submitted_at)}</p></div>
+      <div><p className="eyebrow">{record.application_id}</p><h2>{record.full_name}</h2><p>Submitted {formatDate(record.submitted_at)} · Review for deletion by {formatDate(record.retention_due_at)}</p></div>
       <StatusBadge status={record.application_status} />
     </section>
     <div className="detail-layout">
@@ -183,6 +183,7 @@ export default function App() {
   const [deleteError, setDeleteError] = useState('')
 
   const query = useMemo(() => new URLSearchParams({ ...(search && { search }), ...(status && { status }) }).toString(), [search, status])
+  const retentionWarnings = applications.filter((application) => application.retention_warning)
 
   function loadApplications() {
     setLoading(true)
@@ -226,6 +227,7 @@ export default function App() {
     <div className="admin-body">
       {!selected && <>
         <section className="page-heading"><div><p className="eyebrow">TALENT DATABASE</p><h1>Applications</h1><p>Review applicant information and photos in one place.</p></div><div className="total"><strong>{applications.length}</strong><span>results</span></div></section>
+        {retentionWarnings.length > 0 && <section className="retention-alert" role="status"><AlertTriangle size={20} /><div><strong>{retentionWarnings.length} retention review{retentionWarnings.length === 1 ? '' : 's'} due</strong><span>These applications reach their six-month deletion date within 30 days or are already overdue. Review before deleting.</span></div></section>}
         <section className="toolbar"><label><Search size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, email, phone or reference" /></label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></section>
         {error ? <div className="empty error">{error}</div> : <ApplicationList applications={applications} loading={loading} onSelect={setSelected} onDelete={(item) => { setDeleteError(''); setDeleteTarget(item) }} />}
       </>}
