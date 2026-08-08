@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, ArrowLeft, Clock, ExternalLink, Image, LoaderCircle, LogOut, Mail, MapPin, Moon, Phone, Search, Sun, Trash2, Users, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Clock, Database, ExternalLink, Image, ImageOff, LoaderCircle, LogIn, LogOut, Mail, MapPin, Moon, Phone, RefreshCw, Search, ShieldAlert, Sun, Trash2, Users, WifiOff, X } from 'lucide-react'
 import { applicationSections, declarationFields, photoFields } from '../../src/applicationForm.js'
 
 const statusLabels = { submitted: 'Submitted', reviewing: 'Reviewing', shortlisted: 'Shortlisted', rejected: 'Rejected' }
@@ -34,11 +34,67 @@ function displayValue(value) {
   return value === null || value === undefined || value === '' ? '—' : String(value)
 }
 
+class AdminApiError extends Error {
+  constructor(message, { code = 'UNKNOWN_ERROR', status = 0 } = {}) {
+    super(message)
+    this.name = 'AdminApiError'
+    this.code = code
+    this.status = status
+  }
+}
+
 async function api(path, options) {
-  const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options?.headers } })
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.error || 'Unable to load admin data.')
+  let response
+  try {
+    response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options?.headers } })
+  } catch {
+    const offline = typeof navigator !== 'undefined' && !navigator.onLine
+    throw new AdminApiError(offline ? 'You are offline. Check your internet connection and try again.' : 'The admin service could not be reached. Check your connection and try again.', { code: 'NETWORK_ERROR' })
+  }
+
+  const isJson = response.headers.get('Content-Type')?.includes('application/json')
+  const data = isJson ? await response.json().catch(() => ({})) : {}
+  if (response.status === 401 || (!isJson && response.redirected)) {
+    throw new AdminApiError('Your Cloudflare Access session has expired. Sign in again to continue.', { code: 'SESSION_EXPIRED', status: 401 })
+  }
+  if (response.status === 403) {
+    throw new AdminApiError(data.error || 'You do not have permission to access this admin page.', { code: 'FORBIDDEN', status: 403 })
+  }
+  if (!response.ok || !isJson) {
+    throw new AdminApiError(data.error || 'The admin service returned an unexpected response.', {
+      code: data.code || (response.status >= 500 ? 'SERVICE_ERROR' : 'UNKNOWN_ERROR'),
+      status: response.status,
+    })
+  }
   return data
+}
+
+const errorIcons = {
+  SESSION_EXPIRED: LogIn,
+  FORBIDDEN: ShieldAlert,
+  DATABASE_ERROR: Database,
+  IMAGEKIT_ERROR: ImageOff,
+  NETWORK_ERROR: WifiOff,
+}
+
+function signInAgain() {
+  const returnUrl = encodeURIComponent(window.location.href)
+  window.location.assign(`/cdn-cgi/access/login?redirect_url=${returnUrl}`)
+}
+
+function ErrorState({ error, onRetry, onBack }) {
+  const Icon = errorIcons[error?.code] || AlertTriangle
+  const sessionExpired = error?.code === 'SESSION_EXPIRED'
+  const canRetry = onRetry && !sessionExpired && error?.code !== 'FORBIDDEN'
+  return <div className="empty error-state" role="alert">
+    <span className="error-icon"><Icon size={22} /></span>
+    <div><strong>{sessionExpired ? 'Session expired' : error?.code === 'FORBIDDEN' ? 'Access denied' : 'Something went wrong'}</strong><p>{error?.message || 'Unable to load admin data.'}</p></div>
+    <div className="error-actions">
+      {canRetry && <button onClick={onRetry}><RefreshCw size={15} /> Retry</button>}
+      {sessionExpired && <button onClick={signInAgain}><LogIn size={15} /> Sign in again</button>}
+      {onBack && <button className="secondary-button" onClick={onBack}>Back</button>}
+    </div>
+  </div>
 }
 
 function StatusBadge({ status }) {
@@ -67,7 +123,7 @@ function DeleteDialog({ application, deleting, error, onCancel, onConfirm }) {
       <div className="dialog-icon"><Trash2 size={22} /></div>
       <h2 id="delete-title">Are you sure you want to delete?</h2>
       <p><strong>{application.full_name}</strong>, all application records and every stored ImageKit photo will be permanently removed.{application.application_status === 'orphaned' ? ' This is an incomplete legacy record marked for cleanup.' : ''}</p>
-      {error && <p className="form-error">{error}</p>}
+      {error && <p className="form-error" role="alert">{error.message || error}{error.code === 'SESSION_EXPIRED' && <button type="button" className="inline-action" onClick={signInAgain}>Sign in again</button>}</p>}
       <div className="dialog-actions"><button className="cancel-button" onClick={onCancel} disabled={deleting}>Cancel</button><button className="delete-confirm-button" onClick={onConfirm} disabled={deleting}>{deleting ? 'Deleting…' : 'Yes'}</button></div>
     </section>
   </div>
@@ -80,20 +136,23 @@ function Detail({ applicationId, onBack, onUpdated }) {
   const [status, setStatus] = useState('submitted')
   const [notes, setNotes] = useState('')
 
-  useEffect(() => {
+  function loadDetail() {
+    setError(null)
     api(`/api/admin/applications/${encodeURIComponent(applicationId)}`)
       .then(({ application }) => {
         setRecord(application)
         setStatus(application.application_status)
         setNotes(application.admin_notes || '')
       })
-      .catch((err) => setError(err.message))
-  }, [applicationId])
+      .catch(setError)
+  }
+
+  useEffect(loadDetail, [applicationId])
 
   async function saveReview(event) {
     event.preventDefault()
     setSaving(true)
-    setError('')
+    setError(null)
     try {
       await api(`/api/admin/applications/${encodeURIComponent(applicationId)}`, {
         method: 'PATCH', body: JSON.stringify({ status, notes }),
@@ -101,13 +160,13 @@ function Detail({ applicationId, onBack, onUpdated }) {
       setRecord((current) => ({ ...current, application_status: status, admin_notes: notes }))
       onUpdated()
     } catch (err) {
-      setError(err.message)
+      setError(err)
     } finally {
       setSaving(false)
     }
   }
 
-  if (error && !record) return <div className="empty error">{error}<button onClick={onBack}>Back</button></div>
+  if (error && !record) return <ErrorState error={error} onRetry={loadDetail} onBack={onBack} />
   if (!record) return <div className="empty"><LoaderCircle className="spin" /> Loading application…</div>
 
   const categorizedPhotos = photoCategories.map((category) => ({
@@ -161,7 +220,7 @@ function Detail({ applicationId, onBack, onUpdated }) {
         <form onSubmit={saveReview}>
           <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
           <label>Private notes<textarea rows="9" maxLength="10000" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Add review notes…" /></label>
-          {error && <p className="form-error">{error}</p>}
+          {error && <p className="form-error" role="alert">{error.message || error}{error.code === 'SESSION_EXPIRED' && <button type="button" className="inline-action" onClick={signInAgain}>Sign in again</button>}</p>}
           <button className="primary-button" disabled={saving}>{saving ? 'Saving…' : 'Save review'}</button>
         </form>
         {record.reviewed_by && <small>Last reviewed by {record.reviewed_by}<br />{formatDate(record.reviewed_at)}</small>}
@@ -177,7 +236,7 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(null)
   const [email, setEmail] = useState('')
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'dark')
   const [deleteTarget, setDeleteTarget] = useState(null)
@@ -189,13 +248,13 @@ export default function App() {
 
   function loadApplications() {
     setLoading(true)
-    setError('')
+    setError(null)
     api(`/api/admin/applications?${query}`)
       .then((data) => {
         setApplications(data.applications)
         setSummary(data.summary || emptySummary)
       })
-      .catch((err) => setError(err.message))
+      .catch(setError)
       .finally(() => setLoading(false))
   }
 
@@ -244,7 +303,7 @@ export default function App() {
         </section>
         {retentionWarnings.length > 0 && <section className="retention-alert" role="status"><AlertTriangle size={20} /><div><strong>{retentionWarnings.length} retention review{retentionWarnings.length === 1 ? '' : 's'} due</strong><span>These applications reach their six-month deletion date within 30 days or are already overdue. Review before deleting.</span></div></section>}
         <section className="toolbar"><label><Search size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, email, phone or reference" /></label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></section>
-        {error ? <div className="empty error">{error}</div> : <ApplicationList applications={applications} loading={loading} onSelect={setSelected} onDelete={(item) => { setDeleteError(''); setDeleteTarget(item) }} />}
+        {error ? <ErrorState error={error} onRetry={loadApplications} /> : <ApplicationList applications={applications} loading={loading} onSelect={setSelected} onDelete={(item) => { setDeleteError(''); setDeleteTarget(item) }} />}
       </>}
       {selected && <Detail applicationId={selected} onBack={() => setSelected(null)} onUpdated={loadApplications} />}
     </div>

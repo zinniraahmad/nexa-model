@@ -38,11 +38,11 @@ async function getPublicKey(teamDomain, keyId) {
 
 export async function requireAdmin(request, env) {
   if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) {
-    return { error: apiJson({ error: 'Admin authentication is not configured.' }, { status: 503 }) }
+    return { error: apiJson({ error: 'Admin authentication is not configured.', code: 'AUTH_NOT_CONFIGURED' }, { status: 503 }) }
   }
 
   const token = request.headers.get('Cf-Access-Jwt-Assertion')
-  if (!token) return { error: apiJson({ error: 'Authentication required.' }, { status: 401 }) }
+  if (!token) return { error: apiJson({ error: 'Your admin session has expired.', code: 'SESSION_EXPIRED' }, { status: 401 }) }
 
   try {
     const parts = token.split('.')
@@ -73,15 +73,15 @@ export async function requireAdmin(request, env) {
       .map((item) => item.trim().toLowerCase())
       .filter(Boolean)
     if (!allowlist.length) {
-      return { error: apiJson({ error: 'Admin allowlist is not configured.' }, { status: 503 }) }
+      return { error: apiJson({ error: 'Admin allowlist is not configured.', code: 'AUTH_NOT_CONFIGURED' }, { status: 503 }) }
     }
     if (!email || !allowlist.includes(email)) {
-      return { error: apiJson({ error: 'You are not authorized to review applications.' }, { status: 403 }) }
+      return { error: apiJson({ error: 'You do not have permission to review applications.', code: 'FORBIDDEN' }, { status: 403 }) }
     }
 
     return { email }
   } catch (error) {
     console.error('Admin authentication failed', error)
-    return { error: apiJson({ error: 'Invalid or expired authentication.' }, { status: 401 }) }
+    return { error: apiJson({ error: 'Your admin session is invalid or has expired.', code: 'SESSION_EXPIRED' }, { status: 401 }) }
   }
 }

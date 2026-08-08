@@ -225,6 +225,19 @@ test('applies no-store and consistent security headers to public and admin API r
     }
   }
   assert.equal(responses[1].status, 503)
+  assert.equal((await responses[1].clone().json()).code, 'AUTH_NOT_CONFIGURED')
+})
+
+test('admin exposes actionable session and service error states', () => {
+  const access = readFileSync(new URL('../admin/access.js', import.meta.url), 'utf8')
+  const worker = readFileSync(new URL('../admin/worker.js', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('../admin/src/App.jsx', import.meta.url), 'utf8')
+
+  for (const code of ['SESSION_EXPIRED', 'FORBIDDEN']) assert.match(access, new RegExp(code))
+  for (const code of ['DATABASE_ERROR', 'IMAGEKIT_ERROR']) assert.match(worker, new RegExp(code))
+  assert.match(app, /NETWORK_ERROR/)
+  assert.match(app, /Sign in again/)
+  assert.match(app, /Retry/)
 })
 
 test('admin defaults to dark mode without relying on CSP-blocked inline scripts', () => {

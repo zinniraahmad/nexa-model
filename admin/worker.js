@@ -130,16 +130,22 @@ async function handleApi(request, env, url) {
     `).bind(applicationId).all()
 
     const { responses_json: responsesJson, ...summary } = application
-    return apiJson({ application: { ...summary, responses: parseResponses(responsesJson), photos: signPhotoUrls(env, photos.results) } })
+    try {
+      return apiJson({ application: { ...summary, responses: parseResponses(responsesJson), photos: signPhotoUrls(env, photos.results) } })
+    } catch (error) {
+      console.error('provider.imagekit_signing_failed', { error, applicationId })
+      return apiJson({ error: 'Applicant photos could not be loaded from ImageKit.', code: 'IMAGEKIT_ERROR' }, { status: 502 })
+    }
   }
 
   if (match && request.method === 'PATCH') {
     const applicationId = decodeURIComponent(match[1])
-    const body = await request.json()
+    const body = await request.json().catch(() => null)
+    if (!body) return apiJson({ error: 'Invalid request body.', code: 'VALIDATION_ERROR' }, { status: 400 })
     const status = String(body.status || '')
     const notes = String(body.notes || '').trim()
     if (!STATUSES.includes(status) || notes.length > 10000) {
-      return apiJson({ error: 'Invalid review update.' }, { status: 400 })
+      return apiJson({ error: 'Invalid review update.', code: 'VALIDATION_ERROR' }, { status: 400 })
     }
     const result = await env.DB.prepare(`
       UPDATE applicant_details
@@ -163,7 +169,7 @@ async function handleApi(request, env, url) {
       await deleteImageKitFiles(env, photos.results.map((photo) => photo.file_id))
     } catch (error) {
       console.error('provider.imagekit_deletion_failed', { error, applicationId })
-      return apiJson({ error: 'Photos could not be removed from storage. Database records were kept; please retry.' }, { status: 502 })
+      return apiJson({ error: 'Photos could not be removed from ImageKit. Database records were kept; please retry.', code: 'IMAGEKIT_ERROR' }, { status: 502 })
     }
     await env.DB.batch([
       env.DB.prepare('DELETE FROM applicant_photos WHERE application_id = ?').bind(applicationId),
@@ -179,7 +185,14 @@ async function handleApi(request, env, url) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
-    if (url.pathname.startsWith('/api/admin/')) return handleApi(request, env, url)
+    if (url.pathname.startsWith('/api/admin/')) {
+      try {
+        return await handleApi(request, env, url)
+      } catch (error) {
+        console.error('admin.database_request_failed', { error, path: url.pathname })
+        return apiJson({ error: 'The application database is temporarily unavailable.', code: 'DATABASE_ERROR' }, { status: 503 })
+      }
+    }
     return env.ASSETS.fetch(request)
   },
 }
