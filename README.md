@@ -4,6 +4,8 @@
 
 A lightweight React + Vite starter for Nexa Model.
 
+Before promoting the production site, complete the [Public Launch Checklist](./PUBLIC_LAUNCH_CHECKLIST.md).
+
 ## Included
 
 - Public fashion/boutique landing page

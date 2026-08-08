@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import Home from './pages/Home'
 import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
 import Apply from './pages/TalentApplication'
 import Privacy from './pages/Privacy'
 import { navigate, usePathname } from './router'
@@ -15,8 +14,7 @@ export default function App() {
     }
   }, [pathname])
 
-  if (pathname === '/login') return <Login />
-  if (pathname === '/portal') return <Dashboard />
+  if (pathname === '/login' || pathname === '/portal') return <Login />
   if (pathname === '/apply') return <Apply />
   if (pathname === '/privacy') return <Privacy />
   return <Home />
