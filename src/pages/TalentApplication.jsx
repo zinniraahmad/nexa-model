@@ -15,6 +15,58 @@ import { applicationSections, declarationFields, photoFields } from '../applicat
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 const ACCEPTED_EXTENSIONS = ['.png', '.jpg', '.jpeg']
 const VALID_EMAIL = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
+const PENDING_SESSION_KEY = 'nexa_pending_upload_session'
+const RECOVERY_SESSION_KEY = 'nexa_application_recovery_token'
+
+function readPendingUploadSession() {
+  if (typeof window === 'undefined') return null
+  try {
+    const session = JSON.parse(window.sessionStorage.getItem(PENDING_SESSION_KEY) || 'null')
+    if (!session || typeof session.email !== 'string' || typeof session.applicationId !== 'string' || typeof session.uploadToken !== 'string' || session.uploadToken.length > 200) return null
+    return session
+  } catch {
+    return null
+  }
+}
+
+function writePendingUploadSession(email, applicationId, uploadToken) {
+  try {
+    window.sessionStorage.setItem(PENDING_SESSION_KEY, JSON.stringify({ email: email.trim().toLowerCase(), applicationId, uploadToken }))
+  } catch {
+    // The in-memory token still allows the current tab to finish if storage is unavailable.
+  }
+}
+
+function clearPendingUploadSession() {
+  try {
+    window.sessionStorage.removeItem(PENDING_SESSION_KEY)
+  } catch {
+    // Nothing else is required when browser storage is unavailable.
+  }
+}
+
+function recoveryTokenFromUrl() {
+  if (typeof window === 'undefined') return ''
+  try {
+    const urlToken = new URL(window.location.href).searchParams.get('recovery') || ''
+    if (urlToken && urlToken.length <= 200) {
+      window.sessionStorage.setItem(RECOVERY_SESSION_KEY, urlToken)
+      return urlToken
+    }
+    const sessionToken = window.sessionStorage.getItem(RECOVERY_SESSION_KEY) || ''
+    return sessionToken.length <= 200 ? sessionToken : ''
+  } catch {
+    return ''
+  }
+}
+
+function clearRecoveryToken() {
+  try {
+    window.sessionStorage.removeItem(RECOVERY_SESSION_KEY)
+  } catch {
+    // Nothing else is required when browser storage is unavailable.
+  }
+}
 const poseReferences = [
   ['A', 'Standing Pose', poseA], ['B', 'Side Angle Pose', poseB],
   ['C', 'Floor Pose', poseC], ['D', 'Movement Pose', poseD], ['E', 'Product-Focused Pose', poseE],
@@ -206,6 +258,7 @@ export default function TalentApplication() {
   const [turnstileToken, setTurnstileToken] = useState('')
   const [turnstileResetKey, setTurnstileResetKey] = useState(0)
   const [uploadToken, setUploadToken] = useState('')
+  const [recoveryToken, setRecoveryToken] = useState(recoveryTokenFromUrl)
 
   const photoStep = applicationSections.length + 1
   const declarationStep = photoStep + 1
@@ -221,6 +274,13 @@ export default function TalentApplication() {
     desktopImage.src = formVisuals[nextIndex]
     mobileImage.src = formMobileVisuals[nextIndex]
   }, [visualIndex])
+
+  useEffect(() => {
+    if (!recoveryToken) return
+    const url = new URL(window.location.href)
+    url.searchParams.delete('recovery')
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [recoveryToken])
 
   function moveTo(nextStep) {
     setMessage('')
@@ -288,19 +348,30 @@ export default function TalentApplication() {
       let id = applicationId
       let token = uploadToken
       if (!id) {
+        const normalizedEmail = String(answers.email || '').trim().toLowerCase()
+        const pendingSession = readPendingUploadSession()
+        const replacementCredential = recoveryToken || (pendingSession?.email === normalizedEmail ? pendingSession.uploadToken : '')
+        const headers = { 'Content-Type': 'application/json' }
+        if (replacementCredential) headers.Authorization = `Bearer ${replacementCredential}`
         const response = await fetch('/api/apply', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers,
           body: JSON.stringify({
             full_name: answers.full_name, email: answers.email, phone: answers.phone,
             current_location: answers.current_location, answers, turnstile_token: turnstileToken,
           }),
         })
         const data = await response.json().catch(() => ({}))
+        if (recoveryToken) {
+          clearRecoveryToken()
+          setRecoveryToken('')
+        }
+        if (data.recovery_required) clearPendingUploadSession()
         if (!response.ok || !data.success) throw new Error(data.error || 'Unable to save application.')
         id = data.application_id
         token = data.upload_token
         setApplicationId(id)
         setUploadToken(token)
+        writePendingUploadSession(normalizedEmail, id, token)
       }
 
       const initialProgress = Object.fromEntries(photoFields.filter((field) => photos[field.key]?.length).map((field) => [field.key, { label: field.label, uploaded: 0, total: photos[field.key].length, status: 'waiting' }]))
@@ -327,6 +398,7 @@ export default function TalentApplication() {
       })
       const finalizeResult = await finalizeResponse.json().catch(() => ({}))
       if (!finalizeResponse.ok || !finalizeResult.success) throw new Error(finalizeResult.error || 'Unable to finalize application.')
+      clearPendingUploadSession()
       moveTo(successStep)
     } catch (error) {
       setUploadProgress((current) => Object.fromEntries(Object.entries(current).map(([key, item]) => [key, item.status === 'uploading' ? { ...item, status: 'failed' } : item])))

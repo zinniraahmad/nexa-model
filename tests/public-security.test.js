@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { applicationSections, declarationFields } from '../src/applicationForm.js'
-import { detectImageMime, parsePhotoSlot, validateAnswers } from '../src/worker.js'
+import { authorizePendingReplacement, detectImageMime, parsePhotoSlot, validateAnswers } from '../src/worker.js'
 
 function validValue(field) {
   if (field.type === 'checkbox') return [field.options[0]]
@@ -65,4 +65,58 @@ test('detects PNG and JPEG signatures instead of trusting filenames', async () =
   assert.equal(await detectImageMime(png), 'image/png')
   assert.equal(await detectImageMime(jpeg), 'image/jpeg')
   assert.equal(await detectImageMime(executable), null)
+})
+
+async function tokenHash(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function replacementDatabase({ uploadToken, recoveryToken, recoveryActive = true }) {
+  const state = {
+    uploadHash: uploadToken ? null : undefined,
+    recoveryHash: recoveryToken ? null : undefined,
+    recoveryActive,
+  }
+  return Promise.all([
+    uploadToken ? tokenHash(uploadToken).then((hash) => { state.uploadHash = hash }) : null,
+    recoveryToken ? tokenHash(recoveryToken).then((hash) => { state.recoveryHash = hash }) : null,
+  ]).then(() => ({
+    prepare(sql) {
+      return {
+        bind(nextHash, _nextExpiry, _applicationId, presentedHash) {
+          return {
+            async run() {
+              if (sql.includes('recovery_token_hash = ?') && state.recoveryActive && state.recoveryHash === presentedHash) {
+                state.recoveryHash = null
+                state.uploadHash = nextHash
+                return { meta: { changes: 1 } }
+              }
+              if (sql.includes('AND upload_token_hash = ?') && state.uploadHash === presentedHash) {
+                state.uploadHash = nextHash
+                return { meta: { changes: 1 } }
+              }
+              return { meta: { changes: 0 } }
+            },
+          }
+        },
+      }
+    },
+  }))
+}
+
+test('requires a matching replacement credential and consumes it atomically', async () => {
+  const DB = await replacementDatabase({ uploadToken: 'existing-upload-token', recoveryToken: 'single-use-recovery' })
+  const env = { DB }
+  const request = (token) => new Request('https://nexa-model.com/api/apply', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+
+  assert.equal(await authorizePendingReplacement(request('wrong-token'), env, 'application-1', 'next-hash-1', '2099-01-01 00:00:00'), null)
+  assert.equal(await authorizePendingReplacement(request('single-use-recovery'), env, 'application-1', 'next-hash-2', '2099-01-01 00:00:00'), 'recovery_token')
+  assert.equal(await authorizePendingReplacement(request('single-use-recovery'), env, 'application-1', 'next-hash-3', '2099-01-01 00:00:00'), null)
+})
+
+test('accepts possession of the existing upload token even after its upload window', async () => {
+  const DB = await replacementDatabase({ uploadToken: 'expired-upload-token' })
+  const request = new Request('https://nexa-model.com/api/apply', { headers: { Authorization: 'Bearer expired-upload-token' } })
+  assert.equal(await authorizePendingReplacement(request, { DB }, 'application-2', 'rotated-hash', '2099-01-01 00:00:00'), 'upload_token')
 })

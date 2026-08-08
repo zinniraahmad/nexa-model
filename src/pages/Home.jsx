@@ -84,7 +84,7 @@ export default function Home() {
           <div className="split-copy dark-panel">
             <p className="section-label">FOR BRANDS</p>
             <h2>Find talent that<br /><em>fits the movement.</em></h2>
-            <p>Access a curated network of screened talent with the right image, movement confidence and activewear focus.</p>
+            <p>Connect with screened talent who have the right look, move with confidence, and know how to bring activewear to life.</p>
             <a className="button button-light" href="mailto:itszinniraahmad@gmail.com">Discuss a casting <ArrowRight size={16} /></a>
           </div>
         </section>

@@ -13,8 +13,8 @@ The homepage is already reachable at `https://nexa-model.com` and the deployed a
 - [x] Make the mobile hamburger menu functional, including open/close state, keyboard support, focus handling and navigation links.
 - [x] Enable a permanent HTTP-to-HTTPS redirect using **SSL/TLS → Edge Certificates → Always Use HTTPS**. Verified in production on 8 August 2026: HTTP returns `301`, paths and query strings are preserved, and HTTPS completes with a valid certificate and no redirect loop.
 - [x] Use `nexa-model.com` as the canonical hostname and redirect `www.nexa-model.com` with a method-preserving `308`. Verified in production on 8 August 2026: root, paths, query strings and POST requests redirect correctly without loops.
-- [ ] Correct the application promise on the homepage. It says “up to 5 recent photos,” while the form requires at least 19 and permits up to 26. Confirm the intended requirements, then align the form, API limits and homepage time estimate.
-- [ ] Prevent expired pending applications from being replaced using only a known email address and Turnstile. Require the existing upload token or an emailed, single-use recovery token before replacing answers or deleting uploaded photos.
+- [x] Align the homepage promise with the application requirements. The homepage now advises 20–30 minutes; the shared form/API schema requires at least 19 photos and permits up to 26. Source verified on 8 August 2026; include this change in the next production deployment.
+- [x] Prevent expired pending applications from being replaced using only a known email address and Turnstile. Production now requires the existing upload token or an emailed, single-use recovery token (valid for 60 minutes) before answers or uploaded photos can be replaced; tokens are hashed, rotated atomically and covered by regression tests.
 - [ ] Stop applicant-status/email enumeration. Return a uniform public response instead of revealing whether an email is new, has an active upload session or has already submitted.
 - [ ] Reject oversized JSON and multipart requests before fully parsing them. Keep the current post-parse field and 10 MB image checks as defence in depth.
 - [ ] Have the bilingual Privacy Notice reviewed against Malaysia's PDPA requirements. At minimum, verify the controller's full legal identity/contact details, technical data such as IP/security logs, required versus optional fields and consequences, WhatsApp/Google Drive providers, overseas processing/transfers, complaint handling and current breach-response obligations.
@@ -55,7 +55,7 @@ The homepage is already reachable at `https://nexa-model.com` and the deployed a
 - [x] No tracked `.env`, `.dev.vars`, private-key or credential file was found.
 - [x] Public Worker secret names are configured for Turnstile, ImageKit, Resend and confirmation-email settings; secret values were not read.
 - [x] Admin Worker has its ImageKit private-key secret configured.
-- [x] Production D1 has migrations 0001–0004 and all expected security indexes.
+- [x] Production D1 has migrations 0001–0005 and all expected security indexes and recovery-token columns.
 - [x] Production `/api/config` returns a configured Turnstile site key with `Cache-Control: no-store`.
 - [x] Admin hostname is protected by Cloudflare Access before the admin application loads.
 - [x] Admin API independently validates Access JWT signature, issuer, audience, expiry and the staff email allowlist.

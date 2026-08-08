@@ -11,6 +11,7 @@
   },
 
   "vars": {
+    "PUBLIC_SITE_URL": "https://nexa-model.com",
     "IMAGEKIT_URL_ENDPOINT": "https://ik.imagekit.io/4wqtbbxlw",
     "IMAGEKIT_PUBLIC_KEY": "public_JoigL0BTKplQWvruBFu3esYJiuU="
   },

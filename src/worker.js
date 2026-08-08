@@ -2,6 +2,7 @@ import { applicationSections, declarationFields, photoFields } from './applicati
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
 const UPLOAD_TOKEN_TTL_MS = 60 * 60 * 1000
+const RECOVERY_TOKEN_TTL_MS = 60 * 60 * 1000
 const MAX_JSON_BYTES = 100_000
 const IMAGE_SIGNATURES = [
   { mime: 'image/png', test: (bytes) => bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a },
@@ -51,6 +52,10 @@ function createUploadToken() {
   return base64Url(crypto.getRandomValues(new Uint8Array(32)))
 }
 
+function databaseChanged(result) {
+  return Number(result?.meta?.changes ?? result?.changes ?? 0) > 0
+}
+
 function bearerToken(request) {
   const authorization = request.headers.get('Authorization') || ''
   return authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
@@ -93,6 +98,79 @@ async function sendConfirmationEmail(env, applicant) {
     }),
   })
   return response.ok
+}
+
+async function authorizePendingReplacement(request, env, applicationId, nextUploadTokenHash, nextUploadExpiresAt) {
+  const token = bearerToken(request)
+  if (!token || token.length > 200) return null
+  const tokenHash = await sha256(token)
+
+  const recovered = await env.DB.prepare(`
+    UPDATE applicant_details
+    SET upload_token_hash = ?, upload_token_expires_at = ?, recovery_token_hash = NULL, recovery_token_expires_at = NULL
+    WHERE application_id = ?
+      AND application_status = 'pending_upload'
+      AND recovery_token_hash = ?
+      AND recovery_token_expires_at > CURRENT_TIMESTAMP
+  `).bind(nextUploadTokenHash, nextUploadExpiresAt, applicationId, tokenHash).run()
+  if (databaseChanged(recovered)) return 'recovery_token'
+
+  const resumed = await env.DB.prepare(`
+    UPDATE applicant_details
+    SET upload_token_hash = ?, upload_token_expires_at = ?, recovery_token_hash = NULL, recovery_token_expires_at = NULL
+    WHERE application_id = ?
+      AND application_status = 'pending_upload'
+      AND upload_token_hash = ?
+  `).bind(nextUploadTokenHash, nextUploadExpiresAt, applicationId, tokenHash).run()
+  return databaseChanged(resumed) ? 'upload_token' : null
+}
+
+async function ensurePendingRecoveryEmail(request, env, applicant) {
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false
+  const recoveryToken = createUploadToken()
+  const recoveryTokenHash = await sha256(recoveryToken)
+  const recoveryExpiresAt = new Date(Date.now() + RECOVERY_TOKEN_TTL_MS).toISOString().replace('T', ' ').replace('Z', '')
+  const claimed = await env.DB.prepare(`
+    UPDATE applicant_details
+    SET recovery_token_hash = ?, recovery_token_expires_at = ?
+    WHERE application_id = ?
+      AND application_status = 'pending_upload'
+      AND (recovery_token_expires_at IS NULL OR recovery_token_expires_at <= CURRENT_TIMESTAMP)
+  `).bind(recoveryTokenHash, recoveryExpiresAt, applicant.application_id).run()
+
+  // A still-valid recovery link is already available; do not invalidate or resend it.
+  if (!databaseChanged(claimed)) return true
+
+  const replyTo = env.EMAIL_REPLY_TO || 'itszinniraahmad@gmail.com'
+  const recoveryUrl = new URL('/apply', env.PUBLIC_SITE_URL || request.url)
+  recoveryUrl.searchParams.set('recovery', recoveryToken)
+  const subject = 'Continue your Nexa Model application'
+  const text = `Hi ${applicant.full_name},\n\nWe received a request to replace an unfinished Nexa Model application. Open this single-use link within 60 minutes:\n\n${recoveryUrl}\n\nOpening the link and submitting a new application will replace the unfinished answers and uploaded photos. If you did not request this, ignore this email.\n\nKami menerima permintaan untuk menggantikan permohonan Nexa Model yang belum selesai. Buka pautan sekali guna ini dalam masa 60 minit. Jika anda tidak membuat permintaan ini, abaikan e-mel ini.\n\nPrivacy enquiries / Pertanyaan privasi: ${replyTo}`
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: env.EMAIL_FROM,
+        to: [applicant.email],
+        reply_to: replyTo,
+        subject,
+        text,
+        html: `<p>Hi ${escapeHtml(applicant.full_name)},</p><p>We received a request to replace an unfinished Nexa Model application.</p><p><a href="${escapeHtml(recoveryUrl.toString())}">Continue your application</a></p><p>This single-use link expires in 60 minutes. Opening it and submitting a new application will replace the unfinished answers and uploaded photos. If you did not request this, ignore this email.</p><hr><p>Kami menerima permintaan untuk menggantikan permohonan Nexa Model yang belum selesai.</p><p><a href="${escapeHtml(recoveryUrl.toString())}">Teruskan permohonan anda</a></p><p>Pautan sekali guna ini tamat tempoh dalam masa 60 minit. Jika anda tidak membuat permintaan ini, abaikan e-mel ini.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
+      }),
+    })
+    if (response.ok) return true
+    console.error('Recovery email provider rejected request', { applicationId: applicant.application_id, status: response.status })
+  } catch (error) {
+    console.error('Recovery email failed', { applicationId: applicant.application_id, error })
+  }
+
+  await env.DB.prepare(`
+    UPDATE applicant_details SET recovery_token_hash = NULL, recovery_token_expires_at = NULL
+    WHERE application_id = ? AND recovery_token_hash = ?
+  `).bind(applicant.application_id, recoveryTokenHash).run().catch(() => {})
+  return false
 }
 
 async function verifyTurnstile(request, env, token) {
@@ -211,29 +289,37 @@ async function handleApply(request, env) {
     }
 
     const existing = await env.DB.prepare(`
-      SELECT a.application_id, d.application_status, d.upload_token_expires_at
+      SELECT a.application_id, a.full_name, a.email, d.application_status
       FROM applicants a JOIN applicant_details d ON d.application_id = a.application_id
       WHERE a.email = ? COLLATE NOCASE LIMIT 1
     `).bind(email).first()
     if (existing && existing.application_status !== 'pending_upload') {
       return json({ success: false, error: 'A new application could not be started. If you previously applied, your application remains on file. Contact Nexa Model through its official direct messages if you need help.' }, { status: 409 })
     }
-    if (existing && existing.upload_token_expires_at && new Date(`${existing.upload_token_expires_at}Z`).getTime() > Date.now()) {
-      return json({ success: false, error: 'An upload session is already active for this email. Please continue from the original browser or try again after it expires.' }, { status: 409 })
-    }
-
     const uploadToken = createUploadToken()
     const uploadTokenHash = await sha256(uploadToken)
     const uploadExpiresAt = new Date(Date.now() + UPLOAD_TOKEN_TTL_MS).toISOString().replace('T', ' ').replace('Z', '')
     let applicationId = existing?.application_id
 
     if (existing) {
+      const authorization = await authorizePendingReplacement(request, env, applicationId, uploadTokenHash, uploadExpiresAt)
+      if (!authorization) {
+        const recoveryAvailable = await ensurePendingRecoveryEmail(request, env, existing)
+        if (!recoveryAvailable) {
+          return json({ success: false, error: 'Application recovery is temporarily unavailable. Please try again later.' }, { status: 503 })
+        }
+        return json({
+          success: false,
+          error: 'A new application could not be started. If this email belongs to an unfinished application, a single-use recovery link has been sent or is still active. Check the inbox and spam folder, then open the link within 60 minutes.',
+          recovery_required: true,
+        }, { status: 409 })
+      }
       await deleteImageKitFiles(env, applicationId)
       await env.DB.batch([
         env.DB.prepare('DELETE FROM applicant_photos WHERE application_id = ?').bind(applicationId),
         env.DB.prepare(`UPDATE applicants SET full_name = ?, phone = ?, current_location = ? WHERE application_id = ?`)
           .bind(fullName, phone, location, applicationId),
-        env.DB.prepare(`UPDATE applicant_details SET responses_json = ?, application_status = 'pending_upload', submitted_at = CURRENT_TIMESTAMP, upload_token_hash = ?, upload_token_expires_at = ? WHERE application_id = ?`)
+        env.DB.prepare(`UPDATE applicant_details SET responses_json = ?, application_status = 'pending_upload', submitted_at = CURRENT_TIMESTAMP, upload_token_hash = ?, upload_token_expires_at = ?, recovery_token_hash = NULL, recovery_token_expires_at = NULL WHERE application_id = ?`)
           .bind(responsesJson, uploadTokenHash, uploadExpiresAt, applicationId),
       ])
     } else {
@@ -370,4 +456,4 @@ export default {
   },
 }
 
-export { detectImageMime, parsePhotoSlot, validateAnswers }
+export { authorizePendingReplacement, detectImageMime, parsePhotoSlot, validateAnswers }
