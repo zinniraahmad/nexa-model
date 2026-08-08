@@ -162,6 +162,7 @@ async function handleApi(request, env, url) {
     `
     const summaryQuery = `
       SELECT
+        COUNT(*) AS total,
         SUM(CASE WHEN application_status = 'submitted' THEN 1 ELSE 0 END) AS submitted,
         SUM(CASE WHEN application_status = 'reviewing' THEN 1 ELSE 0 END) AS reviewing,
         SUM(CASE WHEN application_status = 'contacted' THEN 1 ELSE 0 END) AS contacted,
@@ -180,6 +181,7 @@ async function handleApi(request, env, url) {
     return apiJson({
       applications: result.results.map(({ tags_json: tagsJson, ...application }) => ({ ...application, tags: parseTags(tagsJson) })),
       summary: {
+        total: Number(summary?.total || 0),
         submitted: Number(summary?.submitted || 0),
         reviewing: Number(summary?.reviewing || 0),
         contacted: Number(summary?.contacted || 0),

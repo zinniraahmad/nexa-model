@@ -11,7 +11,7 @@ const reviewStatusOptions = [
   ['contacted', 'Contacted'],
   ['rejected', 'Rejected'],
 ]
-const emptySummary = { submitted: 0, reviewing: 0, contacted: 0, interview_scheduled: 0, shortlisted: 0, rejected: 0, retention_overdue: 0 }
+const emptySummary = { total: 0, submitted: 0, reviewing: 0, contacted: 0, interview_scheduled: 0, shortlisted: 0, rejected: 0, retention_overdue: 0 }
 const sortOptions = [
   ['submitted_at:desc', 'Newest first'], ['submitted_at:asc', 'Oldest first'],
   ['age:asc', 'Age: youngest first'], ['age:desc', 'Age: oldest first'],
@@ -180,6 +180,33 @@ function ErrorState({ error, onRetry, onBack }) {
 
 function StatusBadge({ status }) {
   return <span className={`status status-${status}`}>{status === 'orphaned' ? 'Cleanup needed' : (statusLabels[status] || status)}</span>
+}
+
+function AnimatedCount({ value }) {
+  const target = Number(value || 0)
+  const [displayed, setDisplayed] = useState(0)
+
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || target === 0) {
+      setDisplayed(target)
+      return undefined
+    }
+    setDisplayed(0)
+    const startedAt = performance.now()
+    const duration = 650
+    let frame
+    function update(now) {
+      const progress = Math.min(1, (now - startedAt) / duration)
+      const eased = 1 - ((1 - progress) ** 3)
+      setDisplayed(Math.min(target, Math.floor(target * eased)))
+      if (progress < 1) frame = requestAnimationFrame(update)
+      else setDisplayed(target)
+    }
+    frame = requestAnimationFrame(update)
+    return () => cancelAnimationFrame(frame)
+  }, [target])
+
+  return <strong aria-label={String(target)}>{displayed}</strong>
 }
 
 function ApplicationList({ applications, loading, selectedIds, onToggle, onSelect, onDelete }) {
@@ -593,14 +620,14 @@ export default function App() {
       {!selected && <>
         <section className="page-heading"><div><p className="eyebrow">TALENT DATABASE</p><h1>Applications</h1><p>Review applicant information and photos in one place.</p></div><div className="result-meta"><div className="total"><strong>{applications.length}</strong><span>results</span></div>{lastUpdated && <small>Updated {formatDate(lastUpdated)} MYT</small>}</div></section>
         <section className="summary-grid" aria-label="Application summary">
+          <article className="summary-card summary-total">
+            <span className="summary-label"><i aria-hidden="true" />Total applications</span>
+            <AnimatedCount value={summary.total} />
+          </article>
           {Object.entries(statusLabels).map(([key, label]) => <article className={`summary-card summary-${key}`} key={key}>
             <span className="summary-label"><i aria-hidden="true" />{label}</span>
-            <strong>{summary[key]}</strong>
+            <AnimatedCount value={summary[key]} />
           </article>)}
-          <article className="summary-card summary-overdue">
-            <span className="summary-label"><AlertTriangle size={15} aria-hidden="true" />Retention overdue</span>
-            <strong>{summary.retention_overdue}</strong>
-          </article>
         </section>
         {retentionWarnings.length > 0 && <section className="retention-alert" role="status"><AlertTriangle size={20} /><div><strong>{retentionWarnings.length} retention review{retentionWarnings.length === 1 ? '' : 's'} due</strong><span>These applications reach their six-month deletion date within 30 days or are already overdue. Review before deleting.</span></div></section>}
         <section className="toolbar primary-filters"><label><Search size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, email, phone or reference" /></label><select aria-label="Filter by status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></section>

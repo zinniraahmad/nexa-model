@@ -38,9 +38,10 @@ h1 { margin: 0 0 8px; font-size: clamp(41px, 5vw, 65px); letter-spacing: -.055em
 .result-meta small { color: var(--soft-muted); font-size: 13px; }
 .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin: -10px 0 28px; }
 .summary-card { min-width: 0; display: grid; gap: 18px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-.summary-card strong { font: 600 35px/1 'Manrope'; letter-spacing: -.04em; }
+.summary-card > strong { justify-self: center; font: 600 35px/1 'Manrope'; letter-spacing: -.04em; text-align: center; }
 .summary-label { min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; font-weight: 600; line-height: 1.3; }
 .summary-label i { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #88857d; }
+.summary-total .summary-label i { background: var(--accent); }
 .summary-submitted .summary-label i { background: #8a877e; }
 .summary-reviewing .summary-label i { background: #d09524; }
 .summary-contacted .summary-label i { background: #5289b5; }
