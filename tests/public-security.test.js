@@ -227,6 +227,15 @@ test('applies no-store and consistent security headers to public and admin API r
   assert.equal(responses[1].status, 503)
 })
 
+test('admin defaults to dark mode without relying on CSP-blocked inline scripts', () => {
+  const index = readFileSync(new URL('../admin/index.html', import.meta.url), 'utf8')
+  const main = readFileSync(new URL('../admin/src/main.jsx', import.meta.url), 'utf8')
+
+  assert.match(index, /<html lang="en" data-theme="dark">/)
+  assert.doesNotMatch(index, /<script>\s*document\.documentElement\.dataset\.theme/)
+  assert.match(main, /localStorage\.getItem\('nexa-admin-theme-v2'\) \|\| 'dark'/)
+})
+
 test('privacy notice covers the reviewed bilingual PDPA disclosures', () => {
   const notice = readFileSync(new URL('../src/pages/Privacy.jsx', import.meta.url), 'utf8')
   for (const requiredDisclosure of [

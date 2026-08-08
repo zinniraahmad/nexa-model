@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowLeft, Clock, ExternalLink, Image, LoaderCircle, Log
 import { applicationSections, declarationFields, photoFields } from '../../src/applicationForm.js'
 
 const statusLabels = { submitted: 'Submitted', reviewing: 'Reviewing', shortlisted: 'Shortlisted', rejected: 'Rejected' }
+const emptySummary = { submitted: 0, reviewing: 0, shortlisted: 0, rejected: 0, retention_overdue: 0 }
 const fieldMap = new Map(
   [...applicationSections.flatMap((section) => section.fields), ...declarationFields]
     .map((field) => [field.key, field.label]),
@@ -171,13 +172,14 @@ function Detail({ applicationId, onBack, onUpdated }) {
 
 export default function App() {
   const [applications, setApplications] = useState([])
+  const [summary, setSummary] = useState(emptySummary)
   const [selected, setSelected] = useState(null)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [email, setEmail] = useState('')
-  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'light')
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'dark')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
@@ -189,7 +191,10 @@ export default function App() {
     setLoading(true)
     setError('')
     api(`/api/admin/applications?${query}`)
-      .then((data) => setApplications(data.applications))
+      .then((data) => {
+        setApplications(data.applications)
+        setSummary(data.summary || emptySummary)
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
   }
@@ -204,7 +209,7 @@ export default function App() {
   function toggleTheme() {
     const nextTheme = theme === 'dark' ? 'light' : 'dark'
     document.documentElement.dataset.theme = nextTheme
-    localStorage.setItem('nexa-admin-theme', nextTheme)
+    localStorage.setItem('nexa-admin-theme-v2', nextTheme)
     setTheme(nextTheme)
   }
 
@@ -213,8 +218,8 @@ export default function App() {
     setDeleteError('')
     try {
       await api(`/api/admin/applications/${encodeURIComponent(deleteTarget.application_id)}`, { method: 'DELETE' })
-      setApplications((current) => current.filter((item) => item.application_id !== deleteTarget.application_id))
       setDeleteTarget(null)
+      loadApplications()
     } catch (err) {
       setDeleteError(err.message)
     } finally {
@@ -227,6 +232,16 @@ export default function App() {
     <div className="admin-body">
       {!selected && <>
         <section className="page-heading"><div><p className="eyebrow">TALENT DATABASE</p><h1>Applications</h1><p>Review applicant information and photos in one place.</p></div><div className="total"><strong>{applications.length}</strong><span>results</span></div></section>
+        <section className="summary-grid" aria-label="Application summary">
+          {Object.entries(statusLabels).map(([key, label]) => <article className={`summary-card summary-${key}`} key={key}>
+            <span className="summary-label"><i aria-hidden="true" />{label}</span>
+            <strong>{summary[key]}</strong>
+          </article>)}
+          <article className="summary-card summary-overdue">
+            <span className="summary-label"><AlertTriangle size={15} aria-hidden="true" />Retention overdue</span>
+            <strong>{summary.retention_overdue}</strong>
+          </article>
+        </section>
         {retentionWarnings.length > 0 && <section className="retention-alert" role="status"><AlertTriangle size={20} /><div><strong>{retentionWarnings.length} retention review{retentionWarnings.length === 1 ? '' : 's'} due</strong><span>These applications reach their six-month deletion date within 30 days or are already overdue. Review before deleting.</span></div></section>}
         <section className="toolbar"><label><Search size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, email, phone or reference" /></label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></section>
         {error ? <div className="empty error">{error}</div> : <ApplicationList applications={applications} loading={loading} onSelect={setSelected} onDelete={(item) => { setDeleteError(''); setDeleteTarget(item) }} />}

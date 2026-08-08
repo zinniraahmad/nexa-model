@@ -80,8 +80,31 @@ async function handleApi(request, env, url) {
       ORDER BY d.submitted_at DESC
       LIMIT 500
     `
-    const result = await env.DB.prepare(query).bind(...bindings).all()
-    return apiJson({ applications: result.results })
+    const summaryQuery = `
+      SELECT
+        SUM(CASE WHEN application_status = 'submitted' THEN 1 ELSE 0 END) AS submitted,
+        SUM(CASE WHEN application_status = 'reviewing' THEN 1 ELSE 0 END) AS reviewing,
+        SUM(CASE WHEN application_status = 'shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
+        SUM(CASE WHEN application_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+        SUM(CASE WHEN datetime(submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END) AS retention_overdue
+      FROM applicants a
+      LEFT JOIN applicant_details d ON d.application_id = a.application_id
+      WHERE d.application_status IS NULL OR d.application_status <> 'pending_upload'
+    `
+    const [result, summary] = await Promise.all([
+      env.DB.prepare(query).bind(...bindings).all(),
+      env.DB.prepare(summaryQuery).first(),
+    ])
+    return apiJson({
+      applications: result.results,
+      summary: {
+        submitted: Number(summary?.submitted || 0),
+        reviewing: Number(summary?.reviewing || 0),
+        shortlisted: Number(summary?.shortlisted || 0),
+        rejected: Number(summary?.rejected || 0),
+        retention_overdue: Number(summary?.retention_overdue || 0),
+      },
+    })
   }
 
   const match = url.pathname.match(/^\/api\/admin\/applications\/([^/]+)$/)

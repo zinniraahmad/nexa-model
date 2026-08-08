@@ -3,4 +3,6 @@ import { createRoot } from 'react-dom/client'
 import App from './App.jsx'
 import './styles.css'
 
+document.documentElement.dataset.theme = localStorage.getItem('nexa-admin-theme-v2') || 'dark'
+
 createRoot(document.getElementById('root')).render(<StrictMode><App /></StrictMode>)
