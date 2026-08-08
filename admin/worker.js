@@ -1,5 +1,6 @@
 import { requireAdmin } from './access.js'
 import ImageKit from '@imagekit/nodejs'
+import { apiJson } from '../src/apiResponse.js'
 
 const STATUSES = ['submitted', 'reviewing', 'shortlisted', 'rejected']
 
@@ -45,7 +46,7 @@ async function handleApi(request, env, url) {
   if (auth.error) return auth.error
 
   if (url.pathname === '/api/admin/session' && request.method === 'GET') {
-    return Response.json({ email: auth.email })
+    return apiJson({ email: auth.email })
   }
 
   if (url.pathname === '/api/admin/applications' && request.method === 'GET') {
@@ -80,7 +81,7 @@ async function handleApi(request, env, url) {
       LIMIT 500
     `
     const result = await env.DB.prepare(query).bind(...bindings).all()
-    return Response.json({ applications: result.results })
+    return apiJson({ applications: result.results })
   }
 
   const match = url.pathname.match(/^\/api\/admin\/applications\/([^/]+)$/)
@@ -96,7 +97,7 @@ async function handleApi(request, env, url) {
       JOIN applicant_details d ON d.application_id = a.application_id
       WHERE a.application_id = ?
     `).bind(applicationId).first()
-    if (!application) return Response.json({ error: 'Application not found.' }, { status: 404 })
+    if (!application) return apiJson({ error: 'Application not found.' }, { status: 404 })
 
     const photos = await env.DB.prepare(`
       SELECT file_id, file_name, file_url, photo_type
@@ -106,9 +107,7 @@ async function handleApi(request, env, url) {
     `).bind(applicationId).all()
 
     const { responses_json: responsesJson, ...summary } = application
-    return Response.json({ application: { ...summary, responses: parseResponses(responsesJson), photos: signPhotoUrls(env, photos.results) } }, {
-      headers: { 'Cache-Control': 'no-store' },
-    })
+    return apiJson({ application: { ...summary, responses: parseResponses(responsesJson), photos: signPhotoUrls(env, photos.results) } })
   }
 
   if (match && request.method === 'PATCH') {
@@ -117,15 +116,15 @@ async function handleApi(request, env, url) {
     const status = String(body.status || '')
     const notes = String(body.notes || '').trim()
     if (!STATUSES.includes(status) || notes.length > 10000) {
-      return Response.json({ error: 'Invalid review update.' }, { status: 400 })
+      return apiJson({ error: 'Invalid review update.' }, { status: 400 })
     }
     const result = await env.DB.prepare(`
       UPDATE applicant_details
       SET application_status = ?, admin_notes = ?, reviewed_at = CURRENT_TIMESTAMP, reviewed_by = ?
       WHERE application_id = ?
     `).bind(status, notes, auth.email, applicationId).run()
-    if (!result.meta.changes) return Response.json({ error: 'Application not found.' }, { status: 404 })
-    return Response.json({ success: true })
+    if (!result.meta.changes) return apiJson({ error: 'Application not found.' }, { status: 404 })
+    return apiJson({ success: true })
   }
 
   if (match && request.method === 'DELETE') {
@@ -133,7 +132,7 @@ async function handleApi(request, env, url) {
     const existing = await env.DB.prepare('SELECT application_id FROM applicants WHERE application_id = ?')
       .bind(applicationId)
       .first()
-    if (!existing) return Response.json({ error: 'Application not found.' }, { status: 404 })
+    if (!existing) return apiJson({ error: 'Application not found.' }, { status: 404 })
 
     const photos = await env.DB.prepare('SELECT file_id FROM applicant_photos WHERE application_id = ?')
       .bind(applicationId).all()
@@ -141,17 +140,17 @@ async function handleApi(request, env, url) {
       await deleteImageKitFiles(env, photos.results.map((photo) => photo.file_id))
     } catch (error) {
       console.error('ImageKit deletion failed', error)
-      return Response.json({ error: 'Photos could not be removed from storage. Database records were kept; please retry.' }, { status: 502 })
+      return apiJson({ error: 'Photos could not be removed from storage. Database records were kept; please retry.' }, { status: 502 })
     }
     await env.DB.batch([
       env.DB.prepare('DELETE FROM applicant_photos WHERE application_id = ?').bind(applicationId),
       env.DB.prepare('DELETE FROM applicant_details WHERE application_id = ?').bind(applicationId),
       env.DB.prepare('DELETE FROM applicants WHERE application_id = ?').bind(applicationId),
     ])
-    return Response.json({ success: true })
+    return apiJson({ success: true })
   }
 
-  return Response.json({ error: 'Not found.' }, { status: 404 })
+  return apiJson({ error: 'Not found.' }, { status: 404 })
 }
 
 export default {

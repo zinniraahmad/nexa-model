@@ -30,6 +30,9 @@ const sections = [
   ['Security', 'Keselamatan',
     'We use access controls, administrator authentication, bot protection, rate limits, private image storage, hashed single-use tokens, request-size limits and time-limited image links. No online system can guarantee absolute security. Access is restricted to authorized operational purposes and security measures are reviewed as the service changes.',
     'Kami menggunakan kawalan akses, pengesahan pentadbir, perlindungan bot, rate limit, penyimpanan gambar private, token sekali guna yang di-hash, had saiz permintaan dan pautan gambar bertempoh. Tiada sistem dalam talian dapat menjamin keselamatan mutlak. Akses dihadkan kepada tujuan operasi yang dibenarkan dan langkah keselamatan disemak apabila perkhidmatan berubah.'],
+  ['Data breach response', 'Tindak balas pelanggaran data',
+    'If a personal data breach occurs, Nexa Model will contain and investigate it, preserve relevant evidence, assess whether it causes or is likely to cause significant harm, and notify Malaysia’s Personal Data Protection Commissioner and affected individuals when required by the Personal Data Protection Act 2010 and current official guidance.',
+    'Jika pelanggaran data peribadi berlaku, Nexa Model akan membendung dan menyiasatnya, memelihara bukti berkaitan, menilai sama ada ia menyebabkan atau berkemungkinan menyebabkan kemudaratan ketara, serta memberitahu Pesuruhjaya Perlindungan Data Peribadi Malaysia dan individu terjejas apabila diwajibkan oleh Akta Perlindungan Data Peribadi 2010 dan panduan rasmi semasa.'],
   ]
 
 export default function Privacy() {

@@ -1,4 +1,5 @@
 import { applicationSections, declarationFields, photoFields } from './applicationForm.js'
+import { apiJson as json } from './apiResponse.js'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
 const UPLOAD_TOKEN_TTL_MS = 60 * 60 * 1000
@@ -17,12 +18,6 @@ const IMAGE_SIGNATURES = [
 const answerFields = [...applicationSections.flatMap((section) => section.fields), ...declarationFields]
 const answerFieldMap = new Map(answerFields.map((field) => [field.key, field]))
 const photoFieldMap = new Map(photoFields.map((field) => [field.key, field]))
-
-function json(data, init = {}) {
-  const headers = new Headers(init.headers)
-  headers.set('Cache-Control', 'no-store')
-  return Response.json(data, { ...init, headers })
-}
 
 function requestTooLarge() {
   return json({ success: false, error: 'Request is too large.' }, { status: 413 })

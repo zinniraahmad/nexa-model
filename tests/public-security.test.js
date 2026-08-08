@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { applicationSections, declarationFields } from '../src/applicationForm.js'
 import { authorizePendingReplacement, detectImageMime, handleApplicationAccess, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
+import { API_SECURITY_HEADERS, apiJson } from '../src/apiResponse.js'
+import { requireAdmin } from '../admin/access.js'
 
 function validValue(field) {
   if (field.type === 'checkbox') return [field.options[0]]
@@ -190,6 +192,19 @@ test('rejects oversized bodies before JSON and multipart parsing', async () => {
   assert.equal((await parseMultipartRequest(oversizedMultipart)).response.status, 413)
 })
 
+test('applies no-store and consistent security headers to public and admin API responses', async () => {
+  const responses = [
+    apiJson({ success: true }),
+    (await requireAdmin(new Request('https://onlyadmin.nexa-model.com/api/admin/session'), {})).error,
+  ]
+  for (const response of responses) {
+    for (const [name, value] of Object.entries(API_SECURITY_HEADERS)) {
+      assert.equal(response.headers.get(name), value, `Unexpected ${name} header`)
+    }
+  }
+  assert.equal(responses[1].status, 503)
+})
+
 test('privacy notice covers the reviewed bilingual PDPA disclosures', () => {
   const notice = readFileSync(new URL('../src/pages/Privacy.jsx', import.meta.url), 'utf8')
   for (const requiredDisclosure of [
@@ -197,7 +212,7 @@ test('privacy notice covers the reviewed bilingual PDPA disclosures', () => {
     'Required and optional information', 'Maklumat wajib dan pilihan',
     'Cloudflare', 'ImageKit', 'Resend', 'WhatsApp', 'Google Drive',
     'Processing outside Malaysia', 'Pemprosesan di luar Malaysia',
-    'aduan@pdp.gov.my', 'significant harm', 'kemudaratan ketara',
+    'itszinniraahmad@gmail.com', 'significant harm', 'kemudaratan ketara',
   ]) {
     assert.ok(notice.includes(requiredDisclosure), `Missing privacy disclosure: ${requiredDisclosure}`)
   }
