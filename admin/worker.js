@@ -30,6 +30,51 @@ function parseTags(value) {
   return Array.isArray(tags) ? tags : []
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character])
+}
+
+function buildShortlistedEmail(applicant) {
+  const name = String(applicant.full_name || '').trim()
+  const privacyEmail = 'itszinniraahmad@gmail.com'
+  const subject = 'Nexa Model application shortlisted'
+  const text = `Hi ${name},\n\nCongratulations!\n\nWe are pleased to inform you that your application with Nexa Model has been shortlisted. You have been selected to proceed to the training and assessment stage. Our team will contact you with further details about the next steps and schedule.\n\nThank you for your interest in Nexa Model.\n\n---\n\nHai ${name},\n\nTahniah!\n\nSukacita dimaklumkan bahawa permohonan anda bersama Nexa Model telah disenarai pendek. Anda telah dipilih untuk meneruskan ke peringkat latihan dan penilaian. Pihak kami akan menghubungi anda dengan maklumat lanjut mengenai langkah seterusnya dan jadual.\n\nTerima kasih atas minat anda terhadap Nexa Model.\n\nPrivacy enquiries / Pertanyaan privasi: ${privacyEmail}`
+  const safeName = escapeHtml(name)
+  const html = `<p>Hi ${safeName},</p><p><strong>Congratulations!</strong></p><p>We are pleased to inform you that your application with Nexa Model has been <strong>shortlisted</strong>. You have been selected to proceed to the training and assessment stage. Our team will contact you with further details about the next steps and schedule.</p><p>Thank you for your interest in Nexa Model.</p><hr><p>Hai ${safeName},</p><p><strong>Tahniah!</strong></p><p>Sukacita dimaklumkan bahawa permohonan anda bersama Nexa Model telah <strong>disenarai pendek</strong>. Anda telah dipilih untuk meneruskan ke peringkat latihan dan penilaian. Pihak kami akan menghubungi anda dengan maklumat lanjut mengenai langkah seterusnya dan jadual.</p><p>Terima kasih atas minat anda terhadap Nexa Model.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${privacyEmail}</small></p>`
+  return { subject, text, html }
+}
+
+async function sendShortlistedEmail(env, applicant) {
+  if (!env.RESEND_API_KEY) return { ok: false, code: 'EMAIL_NOT_CONFIGURED', message: 'Resend is not configured for the admin service.' }
+  const email = buildShortlistedEmail(applicant)
+  let response
+  try {
+    response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': `application-shortlisted/${applicant.application_id}`,
+      },
+      body: JSON.stringify({
+        from: env.EMAIL_FROM || 'Nexa Model <applications@updates.nexa-model.com>',
+        to: [applicant.email],
+        reply_to: 'itszinniraahmad@gmail.com',
+        ...email,
+      }),
+    })
+  } catch (error) {
+    console.error('provider.resend_network_failed', { messageType: 'candidate_shortlisted', error, applicationId: applicant.application_id })
+    return { ok: false, code: 'EMAIL_ERROR', message: 'The shortlist email service could not be reached. The candidate status was not changed.' }
+  }
+  if (!response.ok) {
+    console.error('provider.resend_request_failed', { messageType: 'candidate_shortlisted', status: response.status, applicationId: applicant.application_id })
+    return { ok: false, code: 'EMAIL_ERROR', message: 'The shortlist email could not be sent. The candidate status was not changed.' }
+  }
+  const result = await response.json().catch(() => ({}))
+  return { ok: true, id: result.id || null }
+}
+
 function signPhotoUrls(env, photos) {
   if (!env.IMAGEKIT_PRIVATE_KEY || !env.IMAGEKIT_URL_ENDPOINT) {
     throw new Error('Private image delivery is not configured for the admin Worker.')
@@ -152,7 +197,7 @@ async function handleApi(request, env, url) {
       ? [...new Set(body.application_ids.map((id) => String(id).trim()).filter(Boolean))]
       : []
     const status = String(body?.status || '')
-    if (!STATUSES.includes(status) || !applicationIds.length || applicationIds.length > 100) {
+    if (!STATUSES.includes(status) || status === 'shortlisted' || !applicationIds.length || applicationIds.length > 100) {
       return apiJson({ error: 'Select between 1 and 100 applications and a valid status.', code: 'VALIDATION_ERROR' }, { status: 400 })
     }
     const placeholders = applicationIds.map(() => '?').join(', ')
@@ -183,7 +228,7 @@ async function handleApi(request, env, url) {
     const application = await env.DB.prepare(`
       SELECT a.application_id, a.full_name, a.email, a.phone, a.current_location,
              d.responses_json, d.application_status, d.submitted_at, d.tags_json,
-             d.admin_notes, d.reviewed_at, d.reviewed_by,
+             d.admin_notes, d.reviewed_at, d.reviewed_by, d.shortlisted_email_sent_at,
              datetime(d.submitted_at, '+6 months') AS retention_due_at,
              CASE WHEN datetime(d.submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS retention_overdue
       FROM applicants a
@@ -231,15 +276,30 @@ async function handleApi(request, env, url) {
     const status = String(body.status || '')
     const notes = String(body.notes || '').trim()
     const tags = normalizeTags(body.tags)
+    const sendShortlistEmail = body.send_shortlisted_email === true
     if (!STATUSES.includes(status) || notes.length > 10000 || !tags) {
       return apiJson({ error: 'Invalid review update.', code: 'VALIDATION_ERROR' }, { status: 400 })
     }
     const existing = await env.DB.prepare(`
-      SELECT application_status, admin_notes, tags_json
-      FROM applicant_details
-      WHERE application_id = ?
+      SELECT d.application_status, d.admin_notes, d.tags_json, d.shortlisted_email_sent_at,
+             a.application_id, a.full_name, a.email
+      FROM applicant_details d
+      JOIN applicants a ON a.application_id = d.application_id
+      WHERE d.application_id = ?
     `).bind(applicationId).first()
     if (!existing) return apiJson({ error: 'Application not found.' }, { status: 404 })
+
+    const isNewShortlist = status === 'shortlisted' && existing.application_status !== 'shortlisted'
+    if (isNewShortlist && !sendShortlistEmail) {
+      return apiJson({ error: 'Confirm the shortlist email before changing this candidate to Shortlisted.', code: 'SHORTLIST_CONFIRMATION_REQUIRED' }, { status: 400 })
+    }
+
+    let shortlistEmailSentAt = null
+    if (isNewShortlist && !existing.shortlisted_email_sent_at) {
+      const emailResult = await sendShortlistedEmail(env, existing)
+      if (!emailResult.ok) return apiJson({ error: emailResult.message, code: emailResult.code }, { status: 502 })
+      shortlistEmailSentAt = new Date().toISOString()
+    }
 
     const changedAt = new Date().toISOString()
     const tagsJson = JSON.stringify(tags)
@@ -252,9 +312,10 @@ async function handleApi(request, env, url) {
       `).bind(applicationId, existing.application_status, status, existing.admin_notes || '', notes, existing.tags_json || '[]', tagsJson, changedAt, auth.email),
       env.DB.prepare(`
         UPDATE applicant_details
-        SET application_status = ?, admin_notes = ?, tags_json = ?, reviewed_at = ?, reviewed_by = ?
+        SET application_status = ?, admin_notes = ?, tags_json = ?, reviewed_at = ?, reviewed_by = ?,
+            shortlisted_email_sent_at = COALESCE(?, shortlisted_email_sent_at)
         WHERE application_id = ?
-      `).bind(status, notes, tagsJson, changedAt, auth.email, applicationId),
+      `).bind(status, notes, tagsJson, changedAt, auth.email, shortlistEmailSentAt, applicationId),
     ])
     if (!result.meta.changes) return apiJson({ error: 'Application not found.' }, { status: 404 })
     return apiJson({ success: true, review: {
@@ -266,7 +327,7 @@ async function handleApi(request, env, url) {
       new_tags: tags,
       changed_at: changedAt,
       changed_by: auth.email,
-    } })
+    }, shortlisted_email_sent_at: shortlistEmailSentAt || existing.shortlisted_email_sent_at || null })
   }
 
   if (match && request.method === 'DELETE') {
@@ -310,4 +371,4 @@ export default {
   },
 }
 
-export { normalizeTags }
+export { buildShortlistedEmail, normalizeTags }

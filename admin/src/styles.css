@@ -219,6 +219,9 @@ dd { margin: 0; font-size: 18px; line-height: 1.55; overflow-wrap: anywhere; }
 .primary-button { border: 0; border-radius: 6px; padding: 12px; background: #20211d; color: white; cursor: pointer; }
 .primary-button:disabled { opacity: .6; }
 .review-panel small { display: block; margin-top: 18px; color: var(--soft-muted); line-height: 1.5; }
+.review-panel .email-sent-state { color: #5f9f69; }
+.email-sent-state svg { margin-right: 5px; vertical-align: -2px; }
+.email-sent-state span { color: var(--soft-muted); }
 .form-error { margin: 0; font-size: 15px; }
 .dialog-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(8,9,7,.62); backdrop-filter: blur(4px); }
 .dialog { position: relative; width: min(440px, 100%); padding: 32px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 28px 80px rgba(0,0,0,.3); text-align: center; }
@@ -232,6 +235,10 @@ dd { margin: 0; font-size: 18px; line-height: 1.55; overflow-wrap: anywhere; }
 .dialog-actions button:disabled { opacity: .6; cursor: wait; }
 .cancel-button { border: 1px solid var(--line); background: var(--input); color: var(--ink); }
 .delete-confirm-button { border: 1px solid #a93838; background: #a93838; color: white; }
+.shortlist-dialog .dialog-icon { background: rgba(74,146,85,.13); color: #4a9255; }
+.shortlist-dialog > p { text-align: left; }
+.shortlist-confirm-button { border: 1px solid #397746; background: #397746; color: #fff; }
+.shortlist-confirm-button:disabled { opacity: .65; cursor: wait; }
 .lightbox-open { overflow: hidden; }
 .lightbox { position: fixed; inset: 0; z-index: 50; display: grid; grid-template: auto 1fr auto / 70px minmax(0, 1fr) 70px; padding: 18px; color: #fff; background: rgba(5,6,5,.96); }
 .lightbox-toolbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-bottom: 14px; font-size: 14px; }

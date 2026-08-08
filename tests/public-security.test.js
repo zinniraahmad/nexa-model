@@ -5,7 +5,7 @@ import { applicationSections, declarationFields, photoFields } from '../src/appl
 import { detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
 import { API_SECURITY_HEADERS, apiJson } from '../src/apiResponse.js'
 import { requireAdmin } from '../admin/access.js'
-import { normalizeTags } from '../admin/worker.js'
+import { buildShortlistedEmail, normalizeTags } from '../admin/worker.js'
 
 function validValue(field) {
   if (field.type === 'checkbox') return [field.options[0]]
@@ -268,6 +268,24 @@ test('admin detail review includes history, completeness and accessible photo co
   assert.match(app, /Missing required/)
   assert.match(app, /Photo viewer/)
   assert.match(app, /Copy reference ID/)
+})
+
+test('shortlisting requires confirmation and creates a bilingual candidate email', () => {
+  const message = buildShortlistedEmail({ full_name: 'Candidate Name' })
+  assert.equal(message.subject, 'Nexa Model application shortlisted')
+  assert.match(message.text, /Hi Candidate Name/)
+  assert.match(message.text, /training and assessment stage/)
+  assert.match(message.text, /Hai Candidate Name/)
+  assert.match(message.text, /peringkat latihan dan penilaian/)
+  assert.match(message.text, /Privacy enquiries \/ Pertanyaan privasi: itszinniraahmad@gmail\.com/)
+
+  const worker = readFileSync(new URL('../admin/worker.js', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('../admin/src/App.jsx', import.meta.url), 'utf8')
+  assert.match(worker, /SHORTLIST_CONFIRMATION_REQUIRED/)
+  assert.match(worker, /application-shortlisted\/\$\{applicant\.application_id\}/)
+  assert.match(worker, /Nexa Model <applications@updates\.nexa-model\.com>/)
+  assert.match(app, /Shortlist this candidate\?/)
+  assert.match(app, /This action will save the review and send a shortlist email/)
 })
 
 test('admin defaults to dark mode without relying on CSP-blocked inline scripts', () => {

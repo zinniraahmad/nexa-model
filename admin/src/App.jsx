@@ -4,6 +4,13 @@ import { applicationSections, declarationFields, photoFields } from '../../src/a
 
 const MALAYSIA_TIME_ZONE = 'Asia/Kuala_Lumpur'
 const statusLabels = { submitted: 'Submitted', reviewing: 'Reviewing', contacted: 'Contacted', interview_scheduled: 'Interview scheduled', shortlisted: 'Shortlisted', rejected: 'Rejected' }
+const reviewStatusOptions = [
+  ['submitted', 'Submitted'],
+  ['reviewing', 'Reviewing'],
+  ['shortlisted', 'Shortlisted'],
+  ['contacted', 'Contacted'],
+  ['rejected', 'Rejected'],
+]
 const emptySummary = { submitted: 0, reviewing: 0, contacted: 0, interview_scheduled: 0, shortlisted: 0, rejected: 0, retention_overdue: 0 }
 const sortOptions = [
   ['submitted_at:desc', 'Newest first'], ['submitted_at:asc', 'Oldest first'],
@@ -146,6 +153,8 @@ const errorIcons = {
   FORBIDDEN: ShieldAlert,
   DATABASE_ERROR: Database,
   IMAGEKIT_ERROR: ImageOff,
+  EMAIL_ERROR: Mail,
+  EMAIL_NOT_CONFIGURED: Mail,
   NETWORK_ERROR: WifiOff,
 }
 
@@ -203,6 +212,19 @@ function DeleteDialog({ application, deleting, error, onCancel, onConfirm }) {
   </div>
 }
 
+function ShortlistDialog({ application, confirming, error, onCancel, onConfirm }) {
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !confirming) onCancel() }}>
+    <section className="dialog shortlist-dialog" role="alertdialog" aria-modal="true" aria-labelledby="shortlist-title">
+      <button className="dialog-close" onClick={onCancel} disabled={confirming} aria-label="Close"><X size={18} /></button>
+      <div className="dialog-icon"><Mail size={22} /></div>
+      <h2 id="shortlist-title">Shortlist this candidate?</h2>
+      <p>Are you sure you want to shortlist <strong>{application.full_name}</strong>? This action will save the review and send a shortlist email to the candidate.</p>
+      {error && <p className="form-error" role="alert">{error.message || error}{error.code === 'SESSION_EXPIRED' && <button type="button" className="inline-action" onClick={signInAgain}>Sign in again</button>}</p>}
+      <div className="dialog-actions"><button className="cancel-button" onClick={onCancel} disabled={confirming}>No</button><button className="shortlist-confirm-button" onClick={onConfirm} disabled={confirming}>{confirming ? 'Sending…' : 'Yes'}</button></div>
+    </section>
+  </div>
+}
+
 function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdated }) {
   const [record, setRecord] = useState(null)
   const [error, setError] = useState('')
@@ -214,6 +236,9 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
   const [copied, setCopied] = useState(false)
   const [lightboxIndex, setLightboxIndex] = useState(null)
   const [zoom, setZoom] = useState(1)
+  const [shortlistDialogOpen, setShortlistDialogOpen] = useState(false)
+  const [shortlisting, setShortlisting] = useState(false)
+  const [shortlistError, setShortlistError] = useState(null)
 
   function loadDetail() {
     setError(null)
@@ -264,15 +289,7 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
       const result = await api(`/api/admin/applications/${encodeURIComponent(applicationId)}`, {
         method: 'PATCH', body: JSON.stringify({ status, notes, tags }),
       })
-      setRecord((current) => ({
-        ...current,
-        application_status: status,
-        admin_notes: notes,
-        tags,
-        reviewed_at: result.review?.changed_at || current.reviewed_at,
-        reviewed_by: result.review?.changed_by || current.reviewed_by,
-        history: result.review ? [...(current.history || []), result.review] : current.history,
-      }))
+      applySavedReview(result, status, notes, tags)
       setTagsText(tags.join(', '))
       setSavedAt(new Date().toISOString())
       onUpdated()
@@ -280,6 +297,50 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
       setError(err)
     } finally {
       setSaving(false)
+    }
+  }
+
+  function applySavedReview(result, nextStatus, nextNotes, tags) {
+    setRecord((current) => ({
+      ...current,
+      application_status: nextStatus,
+      admin_notes: nextNotes,
+      tags,
+      reviewed_at: result.review?.changed_at || current.reviewed_at,
+      reviewed_by: result.review?.changed_by || current.reviewed_by,
+      shortlisted_email_sent_at: result.shortlisted_email_sent_at || current.shortlisted_email_sent_at,
+      history: result.review ? [...(current.history || []), result.review] : current.history,
+    }))
+  }
+
+  function changeStatus(nextStatus) {
+    if (nextStatus === 'shortlisted' && record.application_status !== 'shortlisted') {
+      setShortlistError(null)
+      setShortlistDialogOpen(true)
+      return
+    }
+    setStatus(nextStatus)
+  }
+
+  async function confirmShortlist() {
+    setShortlisting(true)
+    setShortlistError(null)
+    setError(null)
+    try {
+      const tags = [...new Set(tagsText.split(',').map((tag) => tag.trim()).filter(Boolean))]
+      const result = await api(`/api/admin/applications/${encodeURIComponent(applicationId)}`, {
+        method: 'PATCH', body: JSON.stringify({ status: 'shortlisted', notes, tags, send_shortlisted_email: true }),
+      })
+      setStatus('shortlisted')
+      setTagsText(tags.join(', '))
+      applySavedReview(result, 'shortlisted', notes, tags)
+      setSavedAt(new Date().toISOString())
+      setShortlistDialogOpen(false)
+      onUpdated()
+    } catch (err) {
+      setShortlistError(err)
+    } finally {
+      setShortlisting(false)
     }
   }
 
@@ -377,7 +438,7 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
       <aside className="review-panel panel">
         <p className="eyebrow">INTERNAL REVIEW</p><h3>Decision</h3>
         <form onSubmit={saveReview}>
-          <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+          <label>Status<select value={status} onChange={(event) => changeStatus(event.target.value)}>{record.application_status === 'interview_scheduled' && <option value="interview_scheduled">Interview scheduled (legacy)</option>}{reviewStatusOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
           <label>Tags<div className="tag-input"><Tag size={15} /><input value={tagsText} maxLength="320" onChange={(event) => setTagsText(event.target.value)} placeholder="e.g. commercial, KL, priority" /></div><span>Comma-separated, up to 10 tags.</span></label>
           <label>Private notes<textarea rows="9" maxLength="10000" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Add review notes…" /></label>
           {unsaved && <section className="change-preview" aria-label="Unsaved review comparison">
@@ -389,9 +450,11 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
           <div className={`save-state${unsaved ? ' unsaved' : ''}`}>{unsaved ? 'Unsaved changes' : savedAt ? `Saved ${formatDate(savedAt)} MYT` : 'No unsaved changes'}</div>
           <button className="primary-button" disabled={saving || !unsaved}>{saving ? 'Saving…' : 'Save review'}</button>
         </form>
+        {record.shortlisted_email_sent_at && <small className="email-sent-state"><Check size={14} /> Shortlist email sent<br /><span>{formatDate(record.shortlisted_email_sent_at)} MYT</span></small>}
         {record.reviewed_by && <small>Last reviewed by {record.reviewed_by}<br />{formatDate(record.reviewed_at)}</small>}
       </aside>
     </div>
+    {shortlistDialogOpen && <ShortlistDialog application={record} confirming={shortlisting} error={shortlistError} onCancel={() => { setShortlistDialogOpen(false); setShortlistError(null) }} onConfirm={confirmShortlist} />}
     {activePhoto && <div className="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" onMouseDown={(event) => { if (event.target === event.currentTarget) setLightboxIndex(null) }}>
       <div className="lightbox-toolbar">
         <span>{lightboxIndex + 1} / {record.photos.length}</span>
@@ -551,7 +614,7 @@ export default function App() {
         </section>
         {!error && !loading && applications.length > 0 && <section className="selection-toolbar">
           <label><input type="checkbox" checked={applications.filter((item) => item.application_status !== 'orphaned').length > 0 && applications.filter((item) => item.application_status !== 'orphaned').every((item) => selectedIds.has(item.application_id))} onChange={toggleAllVisible} /> Select all visible</label>
-          {selectedIds.size > 0 && <div><strong>{selectedIds.size} selected</strong><select aria-label="Bulk status" value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value)}>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><button onClick={updateSelectedStatus} disabled={bulkSaving}>{bulkSaving ? 'Updating…' : 'Apply status'}</button></div>}
+          {selectedIds.size > 0 && <div><strong>{selectedIds.size} selected</strong><select aria-label="Bulk status" value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value)}>{Object.entries(statusLabels).filter(([value]) => value !== 'shortlisted').map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><button onClick={updateSelectedStatus} disabled={bulkSaving}>{bulkSaving ? 'Updating…' : 'Apply status'}</button></div>}
           {bulkMessage && <span role="status">{bulkMessage}</span>}
         </section>}
         {error ? <ErrorState error={error} onRetry={loadApplications} /> : <ApplicationList applications={applications} loading={loading} selectedIds={selectedIds} onToggle={toggleApplication} onSelect={selectApplication} onDelete={(item) => { setDeleteError(''); setDeleteTarget(item) }} />}
