@@ -19,6 +19,24 @@ const poseReferences = [
   ['A', 'Standing Pose', poseA], ['B', 'Side Angle Pose', poseB],
   ['C', 'Floor Pose', poseC], ['D', 'Movement Pose', poseD], ['E', 'Product-Focused Pose', poseE],
 ]
+const sortedVisuals = (modules) => Object.entries(modules).sort(([left], [right]) => left.localeCompare(right)).map(([, url]) => url)
+const formVisuals = sortedVisuals(import.meta.glob('../assets/images/form_??.webp', { eager: true, query: '?url', import: 'default' }))
+const formMobileVisuals = sortedVisuals(import.meta.glob('../assets/images/form_??_mobile.webp', { eager: true, query: '?url', import: 'default' }))
+const visualFocus = ['66%', '66%', '66%', '66%', '65%', '65%', '58%', '55%', '54%', '64%', '55%', '66%']
+const visualTaglines = [
+  ['Move with intention.', 'Present with confidence.'],
+  ['Begin with clarity.', 'Continue with confidence.'],
+  ['Your story.', 'Your profile.'],
+  ['Presence lives', 'in every detail.'],
+  ['Shape the pose.', 'Own the frame.'],
+  ['Know your value.', 'Choose with confidence.'],
+  ['Practise with purpose.', 'Improve in real time.'],
+  ['Simple tools.', 'Professional preparation.'],
+  ['Review. Refine.', 'Submit.'],
+  ['Ready when', 'opportunity moves.'],
+  ['Clear frames.', 'Honest presentation.'],
+  ['Complete with', 'confidence.'],
+]
 
 function OptionText({ option }) {
   const separator = ' — '
@@ -193,6 +211,16 @@ export default function TalentApplication() {
   const declarationStep = photoStep + 1
   const successStep = declarationStep + 1
   const totalSteps = declarationStep + 1
+  const visualIndex = Math.min(step, totalSteps - 1)
+
+  useEffect(() => {
+    const nextIndex = Math.min(visualIndex + 1, formVisuals.length - 1)
+    if (nextIndex === visualIndex) return
+    const desktopImage = new Image()
+    const mobileImage = new Image()
+    desktopImage.src = formVisuals[nextIndex]
+    mobileImage.src = formMobileVisuals[nextIndex]
+  }, [visualIndex])
 
   function moveTo(nextStep) {
     setMessage('')
@@ -330,6 +358,10 @@ export default function TalentApplication() {
       {step === successStep && <section className="success-step"><div className="success-icon"><Check size={28} /></div><p className="section-label">APPLICATION RECEIVED</p><h2>Thank you.</h2><p>Your application and photos have been submitted. If shortlisted, Nexa Model will contact you through WhatsApp.</p><p className="bm-text">Permohonan dan gambar anda telah diterima. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.</p><p className="reference-label">Your application reference <em>Rujukan permohonan anda</em></p><code>{applicationId}</code><small className="reference-help">Keep this reference for future communication with Nexa Model.<em>Simpan rujukan ini untuk urusan dengan Nexa Model pada masa hadapan.</em></small><Link className="button button-dark" to="/">Return home</Link></section>}
       </>}
       {!alreadySubmitted && message && <p className="form-message" role="status">{message}</p>}
-    </div></section>
+    </div><aside className="application-visual" aria-hidden="true">
+      <picture className="application-visual-frame" key={visualIndex}><source media="(max-width: 600px)" srcSet={formMobileVisuals[visualIndex]} /><img src={formVisuals[visualIndex]} alt="" style={{ '--visual-focus': visualFocus[visualIndex] }} /></picture>
+      <div className="application-visual-overlay" />
+      <div className="application-visual-copy"><span>NEXA MODEL · APPLICATION</span><strong>{String(visualIndex + 1).padStart(2, '0')}</strong><p>{visualTaglines[visualIndex][0]}<br />{visualTaglines[visualIndex][1]}</p></div>
+    </aside></section>
   </main>
 }
