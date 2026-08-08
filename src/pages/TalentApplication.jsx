@@ -154,6 +154,8 @@ function TurnstileWidget({ onToken, resetKey }) {
 function CustomSelect({ field, value, onChange, fieldId }) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef(null)
+  const triggerRef = useRef(null)
+  const optionRefs = useRef([])
 
   useEffect(() => {
     function closeOnOutsideClick(event) {
@@ -166,14 +168,21 @@ function CustomSelect({ field, value, onChange, fieldId }) {
   function choose(option) {
     onChange(option)
     setOpen(false)
+    requestAnimationFrame(() => triggerRef.current?.focus())
+  }
+
+  function focusOption(direction = 1) {
+    const selectedIndex = Math.max(0, field.options.indexOf(value))
+    const targetIndex = direction < 0 && !value ? field.options.length - 1 : selectedIndex
+    requestAnimationFrame(() => optionRefs.current[targetIndex]?.focus())
   }
 
   return <div className={`custom-select${open ? ' is-open' : ''}`} ref={containerRef}>
-    <button id={fieldId} className="custom-select-trigger" type="button" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)} onKeyDown={(event) => { if (event.key === 'Escape') setOpen(false) }}>
+    <button ref={triggerRef} id={fieldId} className="custom-select-trigger" type="button" aria-haspopup="listbox" aria-expanded={open} aria-labelledby={`${fieldId}-label ${fieldId}`} onClick={() => setOpen((current) => !current)} onKeyDown={(event) => { if (event.key === 'Escape') setOpen(false); if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOpen(true); focusOption(event.key === 'ArrowUp' ? -1 : 1) } }}>
       <span className={value ? '' : 'custom-select-placeholder'}>{value || 'Select an option'}</span><ChevronDown size={17} />
     </button>
     {open && <div className="custom-select-menu" role="listbox" aria-labelledby={fieldId}>
-      {field.options.map((option) => <button type="button" role="option" aria-selected={value === option} className={value === option ? 'selected' : ''} key={option} onClick={() => choose(option)}>{option}</button>)}
+      {field.options.map((option, index) => <button ref={(node) => { optionRefs.current[index] = node }} type="button" role="option" aria-selected={value === option} className={value === option ? 'selected' : ''} key={option} onClick={() => choose(option)} onKeyDown={(event) => { if (event.key === 'Escape') { setOpen(false); triggerRef.current?.focus() } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const next = (index + (event.key === 'ArrowDown' ? 1 : -1) + field.options.length) % field.options.length; optionRefs.current[next]?.focus() } else if (event.key === 'Home' || event.key === 'End') { event.preventDefault(); optionRefs.current[event.key === 'Home' ? 0 : field.options.length - 1]?.focus() } }}>{option}</button>)}
     </div>}
   </div>
 }
@@ -203,7 +212,7 @@ function Field({ field, value, onChange, onBlur }) {
   )
 
   if (field.type === 'textarea') return <label className="text-field" htmlFor={fieldId}>{label}<textarea id={fieldId} value={value || ''} onChange={(event) => onChange(event.target.value)} rows="5" required={field.required} /></label>
-  if (field.type === 'select') return <div className="text-field select-field"><div className="field-label">{label}</div><CustomSelect field={field} fieldId={fieldId} value={value} onChange={onChange} /></div>
+  if (field.type === 'select') return <div className="text-field select-field"><div className="field-label" id={`${fieldId}-label`}>{label}</div><CustomSelect field={field} fieldId={fieldId} value={value} onChange={onChange} /></div>
 
   const showEmailWarning = field.type === 'email' && value && !VALID_EMAIL.test(value)
   return <label className={`text-field${showEmailWarning ? ' field-invalid' : ''}`} htmlFor={fieldId}>{label}<input id={fieldId} type={field.type || 'text'} value={value || ''} onChange={(event) => onChange(event.target.value)} onBlur={() => onBlur?.(value)} required={field.required} min={field.min} max={field.max} maxLength={field.maxLength} autoComplete={field.autocomplete} placeholder={field.placeholder} pattern={field.type === 'email' ? '[^\\s@]+@[^\\s@]+\\.[A-Za-z]{2,}' : undefined} />{showEmailWarning && <small className="field-warning" role="alert">Please enter a complete email address, for example name@gmail.com or name@yahoo.com.<em>Sila masukkan alamat e-mel yang lengkap, contohnya nama@gmail.com atau nama@yahoo.com.</em></small>}</label>
@@ -445,10 +454,11 @@ export default function TalentApplication() {
     }
   }
 
-  return <main className="application-page">
+  return <main className="application-page" id="main-content">
+    <h1 className="sr-only">Nexa Model talent application</h1>
     <header className="application-header"><Link className="brand" to="/" aria-label="Nexa Model home"><img className="brand-logo" src={officialLogo} alt="Nexa Model" /></Link><ThemeToggle /></header>
     <section className="application-shell"><div className="application-card">
-      <div className="application-progress"><span style={{ width: `${Math.min(((step + 1) / totalSteps) * 100, 100)}%` }} /></div>
+      <div className="application-progress" role="progressbar" aria-label="Application progress" aria-valuemin="1" aria-valuemax={totalSteps} aria-valuenow={Math.min(step + 1, totalSteps)}><span style={{ width: `${Math.min(((step + 1) / totalSteps) * 100, 100)}%` }} /></div>
       {step !== successStep && !alreadySubmitted && <div className="application-topline"><Link className="back-link" to="/"><ArrowLeft size={16} /> Back to home</Link><p className="section-label">APPLICATION · {String(step + 1).padStart(2, '0')} / {String(totalSteps).padStart(2, '0')}</p></div>}
 
       {alreadySubmitted && <section className="success-step duplicate-application"><div className="success-icon"><Check size={28} /></div><p className="section-label">APPLICATION ALREADY RECEIVED</p><h2>You have already submitted an application. Thank you.</h2><p>Nexa Model will contact you through WhatsApp if you are shortlisted.</p><p className="bm-text">Anda telah menghantar permohonan. Terima kasih. Nexa Model akan menghubungi anda melalui WhatsApp sekiranya anda disenarai pendek.</p><Link className="button button-dark" to="/">Return home</Link></section>}

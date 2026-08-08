@@ -3,7 +3,7 @@ import { Link } from '../router'
 import Navbar from '../components/Navbar'
 
 export default function NotFound() {
-  return <main className="not-found-page">
+  return <main className="not-found-page" id="main-content">
     <Navbar />
     <section className="not-found-content" aria-labelledby="not-found-title">
       <p className="section-label">404</p>

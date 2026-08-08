@@ -139,7 +139,7 @@ async function handleApi(request, env, url) {
     try {
       await deleteImageKitFiles(env, photos.results.map((photo) => photo.file_id))
     } catch (error) {
-      console.error('ImageKit deletion failed', error)
+      console.error('provider.imagekit_deletion_failed', { error, applicationId })
       return apiJson({ error: 'Photos could not be removed from storage. Database records were kept; please retry.' }, { status: 502 })
     }
     await env.DB.batch([

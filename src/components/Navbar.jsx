@@ -7,6 +7,7 @@ import officialLogo from '../assets/images/official_logo_2Kpx.webp'
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuButtonRef = useRef(null)
+  const mobileNavRef = useRef(null)
 
   useEffect(() => {
     if (!menuOpen) return undefined
@@ -16,6 +17,19 @@ export default function Navbar() {
       if (event.key === 'Escape') {
         setMenuOpen(false)
         menuButtonRef.current?.focus()
+        return
+      }
+      if (event.key === 'Tab') {
+        const focusable = [menuButtonRef.current, ...mobileNavRef.current?.querySelectorAll('a') || []].filter(Boolean)
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last?.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first?.focus()
+        }
       }
     }
     const handleDesktopChange = (event) => {
@@ -25,6 +39,7 @@ export default function Navbar() {
     document.body.classList.add('mobile-menu-open')
     document.addEventListener('keydown', handleKeyDown)
     desktopQuery.addEventListener('change', handleDesktopChange)
+    mobileNavRef.current?.querySelector('a')?.focus()
 
     return () => {
       document.body.classList.remove('mobile-menu-open')
@@ -67,7 +82,7 @@ export default function Navbar() {
         </button>
       </div>
 
-      {menuOpen && <nav className="mobile-nav" id="mobile-navigation" aria-label="Mobile navigation">
+      {menuOpen && <nav ref={mobileNavRef} className="mobile-nav" id="mobile-navigation" aria-label="Mobile navigation">
         <a href="#about" onClick={closeMenu}>About</a>
         <a href="#process" onClick={closeMenu}>Process</a>
         <a href="#talents" onClick={closeMenu}>For Talents</a>

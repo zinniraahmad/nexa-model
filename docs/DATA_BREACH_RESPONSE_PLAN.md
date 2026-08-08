@@ -1,8 +1,8 @@
 # Personal-data breach response plan
 
-Incident owner and decision maker: Zinnira Ahmad  
-Primary contact: `itszinniraahmad@gmail.com`  
-Backup contact: `mynexamodel@gmail.com`  
+Incident owner and decision maker: Zinnira Ahmad
+Public incident contact: `hello@nexa-model.com`
+Direct owner fallback: `itszinniraahmad@gmail.com`
 Provider escalation channels: Cloudflare support/security, ImageKit support/security and Resend support/security through their authenticated consoles
 
 This plan applies to loss, unauthorized access, disclosure, alteration or destruction involving application answers, photos, email-delivery data, access tokens, logs or administrator credentials.

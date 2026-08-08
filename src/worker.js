@@ -176,8 +176,11 @@ function escapeHtml(value) {
 }
 
 async function sendSubmissionReceiptEmail(env, applicant) {
-  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false
-  const replyTo = env.EMAIL_REPLY_TO || 'itszinniraahmad@gmail.com'
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) {
+    console.error('provider.resend_not_configured', { messageType: 'candidate_receipt' })
+    return false
+  }
+  const replyTo = env.EMAIL_REPLY_TO || 'hello@nexa-model.com'
   const subject = `Nexa Model application submitted — ${applicant.application_id}`
   const text = `Hi ${applicant.full_name},\n\nYour Nexa Model application and photos were submitted successfully. Your reference is ${applicant.application_id}. Submission does not guarantee shortlisting or training completion. If shortlisted, Nexa Model will contact you through WhatsApp.\n\nPermohonan dan gambar anda telah berjaya dihantar kepada Nexa Model. Rujukan anda ialah ${applicant.application_id}. Permohonan ini tidak menjamin pemilihan atau tamat latihan. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.\n\nPrivacy enquiries / Pertanyaan privasi: ${replyTo}`
   const response = await fetch('https://api.resend.com/emails', {
@@ -196,6 +199,7 @@ async function sendSubmissionReceiptEmail(env, applicant) {
       html: `<p>Hi ${escapeHtml(applicant.full_name)},</p><p>Your Nexa Model application and photos were <strong>submitted successfully</strong>.</p><p><strong>Reference: ${escapeHtml(applicant.application_id)}</strong></p><p>Submission does not guarantee shortlisting, training completion or an assignment. If shortlisted, Nexa Model will contact you through WhatsApp.</p><hr><p>Permohonan dan gambar Nexa Model anda telah <strong>berjaya dihantar</strong>.</p><p><strong>Rujukan: ${escapeHtml(applicant.application_id)}</strong></p><p>Penghantaran tidak menjamin pemilihan, tamat latihan atau tugasan. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
     }),
   })
+  if (!response.ok) console.error('provider.resend_request_failed', { messageType: 'candidate_receipt', status: response.status })
   return response.ok
 }
 
@@ -204,7 +208,10 @@ function singleLineEmailValue(value, maxLength = 120) {
 }
 
 async function sendAdminSubmissionNotification(env, applicant) {
-  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) {
+    console.error('provider.resend_not_configured', { messageType: 'admin_notification' })
+    return false
+  }
   const adminEmail = env.ADMIN_NOTIFICATION_EMAIL || 'itszinniraahmad@gmail.com'
   const adminPortalUrl = env.ADMIN_PORTAL_URL || 'https://onlyadmin.nexa-model.com'
   let responses = {}
@@ -238,6 +245,7 @@ async function sendAdminSubmissionNotification(env, applicant) {
       html: `<p>Hi Admin,</p><p>A new application has been submitted to Nexa Model.</p><h3>Application details</h3><p><strong>Full Name:</strong> ${escapeHtml(fullName)}<br><strong>Preferred Name:</strong> ${escapeHtml(preferredName)}<br><strong>Age:</strong> ${escapeHtml(age)}<br><strong>Current Location:</strong> ${escapeHtml(location)}<br><strong>Application ID:</strong> ${escapeHtml(applicationId)}<br><strong>Submitted At:</strong> ${escapeHtml(submittedAt)} UTC</p><p><a href="${escapeHtml(adminPortalUrl)}">Review the application securely</a></p><p><small>Please do not forward this email or applicant information.</small></p>`,
     }),
   })
+  if (!response.ok) console.error('provider.resend_request_failed', { messageType: 'admin_notification', status: response.status })
   return response.ok
 }
 
@@ -291,7 +299,14 @@ async function handleApplicationAccess(request, env) {
 }
 
 async function verifyTurnstile(request, env, token) {
-  if (!env.TURNSTILE_SECRET_KEY || !token || typeof token !== 'string' || token.length > 2048) return false
+  if (!env.TURNSTILE_SECRET_KEY) {
+    console.error('provider.turnstile_not_configured')
+    return false
+  }
+  if (!token || typeof token !== 'string' || token.length > 2048) {
+    console.warn('security.turnstile_token_rejected', { reason: 'missing_or_invalid' })
+    return false
+  }
   try {
     const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
       method: 'POST',
@@ -304,9 +319,11 @@ async function verifyTurnstile(request, env, token) {
       }),
     })
     const result = await response.json()
-    return response.ok && result.success === true
+    const verified = response.ok && result.success === true
+    if (!verified) console.warn('security.turnstile_verification_failed', { status: response.status, errorCodes: Array.isArray(result['error-codes']) ? result['error-codes'].slice(0, 5) : [] })
+    return verified
   } catch (error) {
-    console.error('Turnstile validation failed', error)
+    console.error('provider.turnstile_request_failed', { error })
     return false
   }
 }
@@ -455,7 +472,10 @@ async function handleUpload(request, env) {
     const occupied = await env.DB.prepare('SELECT file_id FROM applicant_photos WHERE application_id = ? AND photo_type = ? LIMIT 1')
       .bind(applicationId, slot.type).first()
     if (occupied) return json({ success: true, application_id: applicationId, photo_type: slot.type, already_uploaded: true })
-    if (!env.IMAGEKIT_PRIVATE_KEY) return json({ success: false, error: 'Photo service is not configured.' }, { status: 503 })
+    if (!env.IMAGEKIT_PRIVATE_KEY) {
+      console.error('provider.imagekit_not_configured')
+      return json({ success: false, error: 'Photo service is not configured.' }, { status: 503 })
+    }
 
     const safeExtension = detectedMime === 'image/png' ? 'png' : 'jpg'
     const uploadForm = new FormData()
@@ -470,7 +490,10 @@ async function handleUpload(request, env) {
       body: uploadForm,
     })
     const result = await response.json()
-    if (!response.ok) return json({ success: false, error: 'Image provider rejected the upload.' }, { status: 502 })
+    if (!response.ok) {
+      console.error('provider.imagekit_upload_failed', { status: response.status, photoType: slot.type })
+      return json({ success: false, error: 'Image provider rejected the upload.' }, { status: 502 })
+    }
 
     try {
       await env.DB.prepare(`INSERT INTO applicant_photos (application_id, file_id, file_name, file_url, photo_type) VALUES (?, ?, ?, ?, ?)`)
@@ -483,7 +506,7 @@ async function handleUpload(request, env) {
     }
     return json({ success: true, application_id: applicationId, photo_type: slot.type })
   } catch (error) {
-    console.error('Photo upload failed', error)
+    console.error('provider.imagekit_upload_exception', { error })
     return json({ success: false, error: 'Upload failed.' }, { status: 500 })
   }
 }

@@ -13,7 +13,7 @@ export default function Footer() {
         <a href="#talents">Talents</a>
         <a href="#brands">Brands</a>
         <Link to="/privacy">Privacy</Link>
-        <a href="mailto:itszinniraahmad@gmail.com">Contact</a>
+        <a href="mailto:hello@nexa-model.com">Contact</a>
       </div>
       <p className="copyright">© 2026 Nexa Model. All rights reserved.</p>
     </footer>

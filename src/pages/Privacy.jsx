@@ -2,7 +2,7 @@ import { ArrowLeft } from 'lucide-react'
 import { Link } from '../router'
 import ThemeToggle from '../components/ThemeToggle'
 
-const GENERAL_EMAIL = 'mynexamodel@gmail.com'
+const GENERAL_EMAIL = 'hello@nexa-model.com'
 const PRIVACY_EMAIL = 'itszinniraahmad@gmail.com'
 
 const sections = [
@@ -36,7 +36,7 @@ const sections = [
   ]
 
 export default function Privacy() {
-  return <main className="privacy-page">
+  return <main className="privacy-page" id="main-content">
     <header className="privacy-header"><Link className="back-link" to="/"><ArrowLeft size={17} /> Back to website</Link><ThemeToggle /></header>
     <article className="privacy-content">
       <p className="section-label">NEXA MODEL</p>

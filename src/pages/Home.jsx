@@ -15,7 +15,7 @@ export default function Home() {
   return (
     <div>
       <Navbar />
-      <main>
+      <main id="main-content">
         <section className="hero">
           <div className="hero-copy">
             <p className="eyebrow">ACTIVEWEAR TALENT NETWORK · MALAYSIA</p>
@@ -29,7 +29,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="hero-visual" aria-label="Editorial activewear visual placeholder">
+          <div className="hero-visual" role="img" aria-label="Activewear model in an editorial movement pose">
             <div className="hero-image-overlay">
               <span>EDITORIAL · MOVEMENT · WELLNESS</span>
               <strong>01 / 04</strong>
@@ -64,7 +64,7 @@ export default function Home() {
         </section>
 
         <section className="split-section" id="talents">
-          <div className="split-image talent-image" />
+          <div className="split-image talent-image" aria-hidden="true" />
           <div className="split-copy">
             <p className="section-label">FOR TALENTS</p>
             <h2>Build confidence.<br /><em>Move forward.</em></h2>
@@ -80,12 +80,12 @@ export default function Home() {
         </section>
 
         <section className="split-section reverse" id="brands">
-          <div className="split-image brand-image" />
+          <div className="split-image brand-image" aria-hidden="true" />
           <div className="split-copy dark-panel">
             <p className="section-label">FOR BRANDS</p>
             <h2>Find talent that<br /><em>fits the movement.</em></h2>
             <p>Connect with screened talent who have the right look, move with confidence, and know how to bring activewear to life.</p>
-            <a className="button button-light" href="mailto:itszinniraahmad@gmail.com">Discuss a casting <ArrowRight size={16} /></a>
+            <a className="button button-light" href="mailto:hello@nexa-model.com">Discuss a casting <ArrowRight size={16} /></a>
           </div>
         </section>
 

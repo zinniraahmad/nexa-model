@@ -1,8 +1,8 @@
 # Application retention review
 
-Owner: Zinnira Ahmad  
-Operational mailbox: `mynexamodel@gmail.com`  
-Frequency: every Monday, and on the first working day after any missed review  
+Owner: Zinnira Ahmad
+Operational mailbox: `hello@nexa-model.com`
+Frequency: every Monday, and on the first working day after any missed review
 Scope: submitted and incomplete Nexa Model applications in D1 and their private ImageKit files
 
 ## Required review

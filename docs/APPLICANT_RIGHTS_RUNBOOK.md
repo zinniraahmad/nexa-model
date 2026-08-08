@@ -1,8 +1,8 @@
 # Applicant privacy-rights workflow
 
-Owner: Zinnira Ahmad  
-Intake mailbox: `itszinniraahmad@gmail.com`  
-Backup contact: `mynexamodel@gmail.com`
+Owner: Zinnira Ahmad
+Intake mailbox: `hello@nexa-model.com`
+Direct owner fallback: `itszinniraahmad@gmail.com`
 
 This workflow covers access, correction, consent withdrawal and deletion requests. Do not ask an applicant to send identity documents unless the request cannot reasonably be verified using less intrusive information.
 

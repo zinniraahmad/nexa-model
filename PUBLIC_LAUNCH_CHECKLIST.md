@@ -4,7 +4,7 @@ Last reviewed: 8 August 2026
 
 ## Release decision
 
-**Status: HOLD public promotion until the restored single-application flow completes a fresh production end-to-end/deletion test, and the final go-live gate and named launch approval below are complete.**
+**Status: APPROVED FOR PUBLIC PROMOTION. All required launch blockers and final go-live gates are complete.**
 
 The homepage is already reachable at `https://nexa-model.com` and the deployed asset hashes match the current local production build. Treat the site as publicly exposed while completing this checklist.
 
@@ -18,7 +18,7 @@ The homepage is already reachable at `https://nexa-model.com` and the deployed a
 - [x] Document the owner-approved applicant-status/email-enumeration trade-off for the restored flow. After Turnstile, Section 1 tells the visitor whether that email already has an application and displays the already-submitted landing page. This deliberately does not satisfy the earlier anti-enumeration control.
 - [x] Deploy the restored one-receipt public/admin flow. A new email receives a two-hour browser token and may continue; an existing email is stopped; completed uploads move directly to `submitted`; and Resend sends one idempotent bilingual receipt without an action link. Both Workers were deployed on 8 August 2026; direct `/apply` and `/privacy` return `200`, unknown routes return `404`, and `www` preserves paths/queries with `308`. A fresh full form/receipt/deletion test remains required below.
 - [x] Deploy and verify a second independent Turnstile challenge at the Final Declaration. The backend rejects `/api/apply` before D1 creation when this final token is missing, invalid, expired or already used; the first Turnstile remains responsible for the existing-email check. Deployed in public Worker version `7beaf7a4-5720-4481-940a-d5c8a97291d8` on 8 August 2026; `/apply` returns `200` and the live asset contains the final verification UI.
-- [ ] Verify delivery of the separate admin submission notification with one authorized application. The implementation is live in public Worker version `85446b5e-0b7f-4e2a-94d6-47da4f664b17`: it uses its own idempotency key, contains only the approved summary fields and MFA-protected admin link, never includes photos, and does not fail the candidate submission if admin delivery fails. Migration `0009` and the configured admin recipient/portal bindings were verified; actual inbox delivery remains to be checked.
+- [x] Verify delivery of the separate admin submission notification with one authorized application. Confirmed by the owner on 8 August 2026 using a real, authorized candidate submission: the candidate received the submission receipt and the owner received the separate admin notification. The implementation is live in public Worker version `52428aa6-9ec7-45aa-9ee3-d4bb5e7343dc`; it uses its own idempotency key, contains only the approved summary fields and MFA-protected admin link, never includes photos, and does not fail the candidate submission if admin delivery fails. No candidate identity or application data is recorded in this checklist.
 - [x] Reject oversized JSON and multipart requests before fully parsing them. Route-specific limits now check declared size and cap streamed bytes before calling `JSON.parse()` or `formData()`; post-parse schema and 10 MB image checks remain as defence in depth. Regression-tested and production `413` verified on 8 August 2026.
 - [x] Complete the bilingual Privacy Notice implementation review against Malaysia's PDPA requirements. The notice identifies Zinnira Ahmad as the data controller and publishes general/privacy electronic contacts, technical data and sources, mandatory/optional fields and consequences, Cloudflare/ImageKit/Resend/WhatsApp/Google Drive disclosures, overseas processing, rights and complaint handling, and current breach-notification commitments. Reviewed against official Act 709, Amendment Act A1727 and Commissioner guidance on 8 August 2026; the final English/BM controller wording was verified in production without business-registration commentary. Obtain Malaysian legal advice if a formal compliance opinion is required.
 
@@ -29,7 +29,7 @@ The homepage is already reachable at `https://nexa-model.com` and the deployed a
 - [x] Document and test the applicant access, correction, consent-withdrawal and deletion-request workflow before collecting production records. The bilingual intake/verification expectations and access, correction, withdrawal and deletion steps are assigned to Zinnira Ahmad in `docs/APPLICANT_RIGHTS_RUNBOOK.md`; the 8 August 2026 tabletop passed and the successful-deletion path was proven using the authorized synthetic production record described below.
 - [x] Create a data-breach response procedure owned by Zinnira Ahmad with primary/backup and provider escalation contacts, containment and evidence-preservation controls, Malaysia PDPA significant-harm/72-hour assessment, affected-person communication, recovery and a completed tabletop exercise. See `docs/DATA_BREACH_RESPONSE_PLAN.md`.
 - [x] Perform an end-to-end production application test using authorized test data. On 8 August 2026, synthetic application `5b6ef911-0387-41b8-b808-397fbfc86ee7` passed Turnstile, D1 creation, all 19 required private ImageKit uploads, finalization and confirmation-email delivery. The MFA-protected admin displayed 19 five-minute signed image links and a signed asset opened successfully. Admin deletion completed, all three D1 table counts returned zero and the previously signed ImageKit URL returned `404`. No real applicant data was used.
-- [ ] Complete cleanup verification for the restored-flow production test. The owner reports that the Turnstile, existing/new-email behavior, 19 uploads, direct submission, admin display and one receipt email work correctly. A read-only check on 8 August 2026 still found 1 applicant, 1 details record and 19 photo rows in production D1; confirm whether this is an intended retained application or delete it as test data, then verify both D1 and ImageKit removal.
+- [x] Complete cleanup verification for the restored-flow production test. The owner confirmed on 8 August 2026 that the retained test candidate was deleted through the admin workflow, its D1 application data no longer remains and all associated ImageKit images were removed. ImageKit retained only an empty folder containing no candidate files or personal data, which is acceptable and does not block launch.
 - [x] Verify Cloudflare Access membership and require MFA for every administrator. On 8 August 2026, the `onlyadmin` self-hosted application had one `Admin Only` policy allowing only `itszinniraahmad@gmail.com`; the App Launcher was restricted to that same policy; global independent MFA enforcement was enabled with biometrics, security key and authenticator-application methods on a 24-hour duration; and the sole administrator enrolled an authenticator application and successfully completed a live TOTP challenge before the admin dashboard loaded. `wrangler.admin.jsonc` independently restricts the Worker to the same email through `ADMIN_EMAILS`.
 - [x] Document D1 backup/recovery and complete an isolated local restoration drill using one synthetic applicant only. The 8 August 2026 drill restored and verified one row in each applicant/details/photos table, recorded the backup SHA-256 checksum and securely removed temporary artifacts. See `docs/D1_RECOVERY_RUNBOOK.md` and `scripts/d1-recovery-drill.ps1`.
 
@@ -37,20 +37,21 @@ The homepage is already reachable at `https://nexa-model.com` and the deployed a
 
 - [x] Serve a real `/robots.txt` with the production sitemap URL. Verified live on 8 August 2026.
 - [x] Serve `/sitemap.xml` for `/`, `/apply` and `/privacy`. Verified live on 8 August 2026.
-- [ ] Complete favicon/app-icon coverage. `/favicon.svg` is referenced and live, but `/favicon.ico` currently returns a genuine `404`; add ICO/PNG and Apple touch variants for broader browser/device support.
+- [x] Complete favicon/app-icon coverage. SVG, ICO, 180 px Apple touch and 192 px PNG assets are included, referenced and deployed in public Worker version `52428aa6-9ec7-45aa-9ee3-d4bb5e7343dc`. All three new binary endpoints returned `200` with the correct image content type on 8 August 2026.
 - [x] Add Open Graph and social-sharing metadata, plus an absolute canonical URL. Verified in the live homepage HTML on 8 August 2026.
 - [x] Return a genuine `404`/`noindex` experience for unknown routes instead of replacing them with the homepage. Verified live on 8 August 2026.
-- [ ] Replace the personal Gmail address with a domain mailbox such as `privacy@nexa-model.com` or `hello@nexa-model.com`, while retaining a monitored fallback.
+- [x] Replace the public personal Gmail address with `hello@nexa-model.com` while retaining `itszinniraahmad@gmail.com` as the monitored owner fallback and approved privacy contact. Cloudflare Email Routing forwards the active domain route to that verified destination; the inaccessible pending `mynexamodel@gmail.com` destination was removed on 8 August 2026.
 - [x] Align the English/Malay age wording and server validation at 18–30 inclusive. Regression-tested and deployed.
-- [ ] Check colour contrast, keyboard navigation, screen-reader names and reduced-motion behaviour across the homepage, application and privacy notice.
-- [ ] Add monitoring alerts for elevated `4xx`/`5xx`, rate-limit events, Turnstile failures, ImageKit/Resend failures and unusual admin activity.
-- [ ] Enable DNSSEC at the registrar/Cloudflare when operationally ready; no DS record was found during this review.
+- [x] Check colour contrast, keyboard navigation, screen-reader names and reduced-motion behaviour across the homepage, application and privacy notice. All three routes scored 100/100 in a Lighthouse WCAG accessibility audit on 8 August 2026; skip navigation, landmarks, application heading/progress semantics, mobile-menu focus handling and custom-select keyboard behavior were added. See `docs/ACCESSIBILITY_AUDIT.md`.
+- [x] Activate monitoring for Worker errors, rate limits, Turnstile, ImageKit, Resend and unusual admin activity. Worker Observability, full invocation/application logging, 10% traces and privacy-safe structured provider/security signals are live in public Worker `52428aa6-9ec7-45aa-9ee3-d4bb5e7343dc` and admin Worker `ec719b77-6d46-43fe-b6ec-3f5c28fac55d`, with an assigned review in `docs/MONITORING_RUNBOOK.md`. The live dashboard was receiving events with zero errors at verification time.
+- [ ] Add automatic notifications for the monitored failure signals. The current Cloudflare account exposes no Worker-error notification type, so automatic notification remains unavailable on the present plan; the assigned dashboard review is the active fallback.
+- [x] Enable DNSSEC at the registrar/Cloudflare. Enabled through Cloudflare on 8 August 2026; the parent `.com` zone now publishes a DS record for `nexa-model.com` using algorithm 13 and digest type 2.
 
 ## Dependency follow-up
 
 - [x] Production dependency audit: `npm audit --omit=dev` reports 0 known vulnerabilities.
-- [ ] Track the current development-tool advisories. A full `npm audit` reports 7 transitive advisories in Vite/Wrangler tooling (2 moderate, 5 high) with no available fix at review time. They are not included in the deployed browser bundle, but should be rechecked when updates are released.
-- [ ] Update Wrangler from 4.119.0 to a supported patched release after testing; 4.120.0 was available at review time.
+- [x] Track and remediate the development-tool advisories. The seven initially tracked transitive advisories were cleared once patched dependency paths became available: Vite 8.2.1, Wrangler 4.120.0, Miniflare 5.20260801.1-alpha, Undici 7.29.0 and Nano ID 3.3.18 are installed. Both the production-only and full `npm audit` now report 0 known vulnerabilities. Zinnira Ahmad owns the weekly and pre-deployment review documented in `docs/DEPENDENCY_MONITORING.md`.
+- [x] Update Wrangler from 4.119.0 to the patched 4.120.0 release and rerun the full test/build/audit suite.
 
 ## Verified on 8 August 2026
 
@@ -76,10 +77,10 @@ The homepage is already reachable at `https://nexa-model.com` and the deployed a
 
 ## Final go-live gate
 
-- [ ] Re-run `npm test`, `npm run build:all`, `npm audit --omit=dev` and `git diff --check` from a clean worktree.
-- [ ] Re-test desktop and mobile navigation against the production hostname.
-- [ ] Re-check HTTP/canonical redirects, security headers, `robots.txt`, sitemap, favicon and unknown-route handling in production.
+- [x] Re-run `npm test`, `npm run build:all`, `npm audit --omit=dev` and `git diff --check` from a clean worktree. Completed on 8 August 2026: all 13 tests and both builds passed, the production dependency audit reported zero vulnerabilities, the diff check passed and the worktree remained clean.
+- [x] Re-test desktop and mobile navigation against the production hostname. Completed on 8 August 2026: homepage and application routes rendered without console errors; the 390 px layouts had no horizontal overflow; and the mobile hamburger opened and closed correctly in light mode.
+- [x] Re-check HTTP/canonical redirects, security headers, `robots.txt`, sitemap, favicon and unknown-route handling in production. Completed on 8 August 2026: redirects preserve paths/queries, security and no-store headers are present, crawl files and SVG/ICO/Apple/192 px icons respond correctly, and unknown routes return `404`/`noindex`.
 - [x] Confirm the application end-to-end test and deletion test passed on 8 August 2026 using authorized synthetic data; D1 and ImageKit post-deletion checks found no retained test record or image.
-- [ ] Record launch approval, responsible owner and rollback decision here.
+- [x] Record launch approval, responsible owner and rollback decision here.
 
-Approval: ____________________  Date: ____________________  Rollback owner: ____________________
+Approval: ___Mav____  Date: ___8/8/2026________  Rollback owner: ___Mav______

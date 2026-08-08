@@ -37,9 +37,12 @@ export default function App() {
     setMeta('link[rel="canonical"]', 'href', `${SITE_URL}${pathname}`)
   }, [metadata, pathname])
 
-  if (pathname === '/login' || pathname === '/portal') return <Login />
-  if (pathname === '/apply') return <Apply />
-  if (pathname === '/privacy') return <Privacy />
-  if (pathname === '/') return <Home />
-  return <NotFound />
+  let page
+  if (pathname === '/login' || pathname === '/portal') page = <Login />
+  else if (pathname === '/apply') page = <Apply />
+  else if (pathname === '/privacy') page = <Privacy />
+  else if (pathname === '/') page = <Home />
+  else page = <NotFound />
+
+  return <><a className="skip-link" href="#main-content">Skip to main content</a>{page}</>
 }

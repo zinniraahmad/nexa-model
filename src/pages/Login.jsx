@@ -4,7 +4,7 @@ import ThemeToggle from '../components/ThemeToggle'
 
 export default function Login() {
   return (
-    <main className="auth-layout">
+    <main className="auth-layout" id="main-content">
       <section className="auth-visual">
         <Link className="back-link light-link" to="/"><ArrowLeft size={17} /> Back to website</Link>
         <div>
