@@ -2,7 +2,13 @@ import { requireAdmin } from './access.js'
 import ImageKit from '@imagekit/nodejs'
 import { apiJson } from '../src/apiResponse.js'
 
-const STATUSES = ['submitted', 'reviewing', 'shortlisted', 'rejected']
+const STATUSES = ['submitted', 'reviewing', 'contacted', 'interview_scheduled', 'shortlisted', 'rejected']
+const SORT_COLUMNS = {
+  submitted_at: 'd.submitted_at',
+  age: "CAST(json_extract(d.responses_json, '$.age') AS INTEGER)",
+  location: 'a.current_location COLLATE NOCASE',
+  status: 'd.application_status COLLATE NOCASE',
+}
 
 function parseResponses(value) {
   try {
@@ -10,6 +16,18 @@ function parseResponses(value) {
   } catch {
     return {}
   }
+}
+
+function normalizeTags(value) {
+  if (!Array.isArray(value)) return null
+  const tags = [...new Set(value.map((tag) => String(tag).trim()).filter(Boolean))]
+  if (tags.length > 10 || tags.some((tag) => tag.length > 30)) return null
+  return tags
+}
+
+function parseTags(value) {
+  const tags = parseResponses(value)
+  return Array.isArray(tags) ? tags : []
 }
 
 function signPhotoUrls(env, photos) {
@@ -52,21 +70,38 @@ async function handleApi(request, env, url) {
   if (url.pathname === '/api/admin/applications' && request.method === 'GET') {
     const search = url.searchParams.get('search')?.trim() || ''
     const status = url.searchParams.get('status')?.trim() || ''
+    const dateFrom = url.searchParams.get('date_from')?.trim() || ''
+    const dateTo = url.searchParams.get('date_to')?.trim() || ''
+    const retention = url.searchParams.get('retention')?.trim() || ''
+    const sort = url.searchParams.get('sort')?.trim() || 'submitted_at'
+    const direction = url.searchParams.get('direction') === 'asc' ? 'ASC' : 'DESC'
+    const sortColumn = SORT_COLUMNS[sort] || SORT_COLUMNS.submitted_at
     const conditions = ["(d.application_status IS NULL OR d.application_status <> 'pending_upload')"]
     const bindings = []
     if (search) {
-      conditions.push('(a.full_name LIKE ? OR a.email LIKE ? OR a.phone LIKE ? OR a.application_id LIKE ?)')
+      conditions.push('(a.full_name LIKE ? OR a.email LIKE ? OR a.phone LIKE ? OR a.application_id LIKE ? OR d.tags_json LIKE ?)')
       const term = `%${search}%`
-      bindings.push(term, term, term, term)
+      bindings.push(term, term, term, term, term)
     }
     if (status && STATUSES.includes(status)) {
       conditions.push('d.application_status = ?')
       bindings.push(status)
     }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
+      conditions.push("date(d.submitted_at, '+8 hours') >= ?")
+      bindings.push(dateFrom)
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+      conditions.push("date(d.submitted_at, '+8 hours') <= ?")
+      bindings.push(dateTo)
+    }
+    if (retention === 'warning') conditions.push("datetime(d.submitted_at, '+6 months') <= datetime('now', '+30 days')")
+    if (retention === 'overdue') conditions.push("datetime(d.submitted_at, '+6 months') <= CURRENT_TIMESTAMP")
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
     const query = `
       SELECT a.application_id, a.full_name, a.email, a.phone, a.current_location,
-             COALESCE(d.application_status, 'orphaned') AS application_status, d.submitted_at,
+             CAST(json_extract(d.responses_json, '$.age') AS INTEGER) AS age,
+             COALESCE(d.application_status, 'orphaned') AS application_status, d.submitted_at, d.tags_json,
              datetime(d.submitted_at, '+6 months') AS retention_due_at,
              CASE WHEN datetime(d.submitted_at, '+6 months') <= datetime('now', '+30 days') THEN 1 ELSE 0 END AS retention_warning,
              CASE WHEN datetime(d.submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS retention_overdue,
@@ -76,14 +111,16 @@ async function handleApi(request, env, url) {
       LEFT JOIN applicant_photos p ON p.application_id = a.application_id
       ${where}
       GROUP BY a.application_id, a.full_name, a.email, a.phone, a.current_location,
-               d.application_status, d.submitted_at
-      ORDER BY d.submitted_at DESC
+               d.application_status, d.submitted_at, d.tags_json
+      ORDER BY ${sortColumn} ${direction}, d.submitted_at DESC
       LIMIT 500
     `
     const summaryQuery = `
       SELECT
         SUM(CASE WHEN application_status = 'submitted' THEN 1 ELSE 0 END) AS submitted,
         SUM(CASE WHEN application_status = 'reviewing' THEN 1 ELSE 0 END) AS reviewing,
+        SUM(CASE WHEN application_status = 'contacted' THEN 1 ELSE 0 END) AS contacted,
+        SUM(CASE WHEN application_status = 'interview_scheduled' THEN 1 ELSE 0 END) AS interview_scheduled,
         SUM(CASE WHEN application_status = 'shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
         SUM(CASE WHEN application_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
         SUM(CASE WHEN datetime(submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END) AS retention_overdue
@@ -96,10 +133,12 @@ async function handleApi(request, env, url) {
       env.DB.prepare(summaryQuery).first(),
     ])
     return apiJson({
-      applications: result.results,
+      applications: result.results.map(({ tags_json: tagsJson, ...application }) => ({ ...application, tags: parseTags(tagsJson) })),
       summary: {
         submitted: Number(summary?.submitted || 0),
         reviewing: Number(summary?.reviewing || 0),
+        contacted: Number(summary?.contacted || 0),
+        interview_scheduled: Number(summary?.interview_scheduled || 0),
         shortlisted: Number(summary?.shortlisted || 0),
         rejected: Number(summary?.rejected || 0),
         retention_overdue: Number(summary?.retention_overdue || 0),
@@ -107,12 +146,30 @@ async function handleApi(request, env, url) {
     })
   }
 
+  if (url.pathname === '/api/admin/applications/bulk' && request.method === 'PATCH') {
+    const body = await request.json().catch(() => null)
+    const applicationIds = Array.isArray(body?.application_ids)
+      ? [...new Set(body.application_ids.map((id) => String(id).trim()).filter(Boolean))]
+      : []
+    const status = String(body?.status || '')
+    if (!STATUSES.includes(status) || !applicationIds.length || applicationIds.length > 100) {
+      return apiJson({ error: 'Select between 1 and 100 applications and a valid status.', code: 'VALIDATION_ERROR' }, { status: 400 })
+    }
+    const placeholders = applicationIds.map(() => '?').join(', ')
+    const result = await env.DB.prepare(`
+      UPDATE applicant_details
+      SET application_status = ?, reviewed_at = CURRENT_TIMESTAMP, reviewed_by = ?
+      WHERE application_id IN (${placeholders})
+    `).bind(status, auth.email, ...applicationIds).run()
+    return apiJson({ success: true, updated: Number(result.meta.changes || 0) })
+  }
+
   const match = url.pathname.match(/^\/api\/admin\/applications\/([^/]+)$/)
   if (match && request.method === 'GET') {
     const applicationId = decodeURIComponent(match[1])
     const application = await env.DB.prepare(`
       SELECT a.application_id, a.full_name, a.email, a.phone, a.current_location,
-             d.responses_json, d.application_status, d.submitted_at,
+             d.responses_json, d.application_status, d.submitted_at, d.tags_json,
              d.admin_notes, d.reviewed_at, d.reviewed_by,
              datetime(d.submitted_at, '+6 months') AS retention_due_at,
              CASE WHEN datetime(d.submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS retention_overdue
@@ -129,9 +186,9 @@ async function handleApi(request, env, url) {
       ORDER BY photo_type, file_name
     `).bind(applicationId).all()
 
-    const { responses_json: responsesJson, ...summary } = application
+    const { responses_json: responsesJson, tags_json: tagsJson, ...summary } = application
     try {
-      return apiJson({ application: { ...summary, responses: parseResponses(responsesJson), photos: signPhotoUrls(env, photos.results) } })
+      return apiJson({ application: { ...summary, responses: parseResponses(responsesJson), tags: parseTags(tagsJson), photos: signPhotoUrls(env, photos.results) } })
     } catch (error) {
       console.error('provider.imagekit_signing_failed', { error, applicationId })
       return apiJson({ error: 'Applicant photos could not be loaded from ImageKit.', code: 'IMAGEKIT_ERROR' }, { status: 502 })
@@ -144,14 +201,15 @@ async function handleApi(request, env, url) {
     if (!body) return apiJson({ error: 'Invalid request body.', code: 'VALIDATION_ERROR' }, { status: 400 })
     const status = String(body.status || '')
     const notes = String(body.notes || '').trim()
-    if (!STATUSES.includes(status) || notes.length > 10000) {
+    const tags = normalizeTags(body.tags)
+    if (!STATUSES.includes(status) || notes.length > 10000 || !tags) {
       return apiJson({ error: 'Invalid review update.', code: 'VALIDATION_ERROR' }, { status: 400 })
     }
     const result = await env.DB.prepare(`
       UPDATE applicant_details
-      SET application_status = ?, admin_notes = ?, reviewed_at = CURRENT_TIMESTAMP, reviewed_by = ?
+      SET application_status = ?, admin_notes = ?, tags_json = ?, reviewed_at = CURRENT_TIMESTAMP, reviewed_by = ?
       WHERE application_id = ?
-    `).bind(status, notes, auth.email, applicationId).run()
+    `).bind(status, notes, JSON.stringify(tags), auth.email, applicationId).run()
     if (!result.meta.changes) return apiJson({ error: 'Application not found.' }, { status: 404 })
     return apiJson({ success: true })
   }
@@ -196,3 +254,5 @@ export default {
     return env.ASSETS.fetch(request)
   },
 }
+
+export { normalizeTags }

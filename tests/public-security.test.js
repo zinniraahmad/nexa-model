@@ -5,6 +5,7 @@ import { applicationSections, declarationFields, photoFields } from '../src/appl
 import { detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
 import { API_SECURITY_HEADERS, apiJson } from '../src/apiResponse.js'
 import { requireAdmin } from '../admin/access.js'
+import { normalizeTags } from '../admin/worker.js'
 
 function validValue(field) {
   if (field.type === 'checkbox') return [field.options[0]]
@@ -238,6 +239,19 @@ test('admin exposes actionable session and service error states', () => {
   assert.match(app, /NETWORK_ERROR/)
   assert.match(app, /Sign in again/)
   assert.match(app, /Retry/)
+})
+
+test('admin workflow validates tags and uses Malaysia time for dates and filters', () => {
+  assert.deepEqual(normalizeTags([' commercial ', 'KL', 'commercial', '']), ['commercial', 'KL'])
+  assert.equal(normalizeTags(Array.from({ length: 11 }, (_, index) => `tag-${index}`)), null)
+  assert.equal(normalizeTags(['x'.repeat(31)]), null)
+
+  const worker = readFileSync(new URL('../admin/worker.js', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('../admin/src/App.jsx', import.meta.url), 'utf8')
+  assert.match(worker, /date\(d\.submitted_at, '\+8 hours'\)/)
+  assert.match(app, /Asia\/Kuala_Lumpur/)
+  assert.match(app, /Export CSV/)
+  assert.match(app, /Unsaved changes/)
 })
 
 test('admin defaults to dark mode without relying on CSP-blocked inline scripts', () => {

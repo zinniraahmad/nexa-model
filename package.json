@@ -10,7 +10,8 @@
     "build:admin": "vite build --config vite.admin.config.js",
     "build:all": "npm run build && npm run build:admin",
     "test": "node --test tests/*.test.js",
-    "deploy:admin": "npm run build:admin && wrangler deploy --config wrangler.admin.jsonc",
+    "migrate:admin": "wrangler d1 migrations apply nexa-production --remote --config wrangler.admin.jsonc",
+    "deploy:admin": "npm run build:admin && npm run migrate:admin && wrangler deploy --config wrangler.admin.jsonc",
     "preview": "vite preview"
   },
   "dependencies": {
