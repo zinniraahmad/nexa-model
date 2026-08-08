@@ -254,6 +254,22 @@ test('admin workflow validates tags and uses Malaysia time for dates and filters
   assert.match(app, /Unsaved changes/)
 })
 
+test('admin detail review includes history, completeness and accessible photo controls', () => {
+  const worker = readFileSync(new URL('../admin/worker.js', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('../admin/src/App.jsx', import.meta.url), 'utf8')
+  const migration = readFileSync(new URL('../migrations/0011_application_review_history.sql', import.meta.url), 'utf8')
+
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS application_review_history/)
+  assert.match(migration, /ON DELETE CASCADE/)
+  assert.match(worker, /INSERT INTO application_review_history/)
+  assert.match(worker, /ORDER BY changed_at ASC/)
+  assert.match(app, /Application timeline/)
+  assert.match(app, /Compare changes/)
+  assert.match(app, /Missing required/)
+  assert.match(app, /Photo viewer/)
+  assert.match(app, /Copy reference ID/)
+})
+
 test('admin defaults to dark mode without relying on CSP-blocked inline scripts', () => {
   const index = readFileSync(new URL('../admin/index.html', import.meta.url), 'utf8')
   const main = readFileSync(new URL('../admin/src/main.jsx', import.meta.url), 'utf8')

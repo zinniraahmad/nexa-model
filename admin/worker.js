@@ -156,11 +156,24 @@ async function handleApi(request, env, url) {
       return apiJson({ error: 'Select between 1 and 100 applications and a valid status.', code: 'VALIDATION_ERROR' }, { status: 400 })
     }
     const placeholders = applicationIds.map(() => '?').join(', ')
-    const result = await env.DB.prepare(`
-      UPDATE applicant_details
-      SET application_status = ?, reviewed_at = CURRENT_TIMESTAMP, reviewed_by = ?
-      WHERE application_id IN (${placeholders})
-    `).bind(status, auth.email, ...applicationIds).run()
+    const changedAt = new Date().toISOString()
+    const [, result] = await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO application_review_history (
+          application_id, previous_status, new_status, previous_notes, new_notes,
+          previous_tags_json, new_tags_json, changed_at, changed_by
+        )
+        SELECT application_id, application_status, ?, admin_notes, admin_notes,
+               tags_json, tags_json, ?, ?
+        FROM applicant_details
+        WHERE application_id IN (${placeholders}) AND application_status <> ?
+      `).bind(status, changedAt, auth.email, ...applicationIds, status),
+      env.DB.prepare(`
+        UPDATE applicant_details
+        SET application_status = ?, reviewed_at = ?, reviewed_by = ?
+        WHERE application_id IN (${placeholders})
+      `).bind(status, changedAt, auth.email, ...applicationIds),
+    ])
     return apiJson({ success: true, updated: Number(result.meta.changes || 0) })
   }
 
@@ -186,9 +199,25 @@ async function handleApi(request, env, url) {
       ORDER BY photo_type, file_name
     `).bind(applicationId).all()
 
+    const history = await env.DB.prepare(`
+      SELECT id, previous_status, new_status, previous_notes, new_notes,
+             previous_tags_json, new_tags_json, changed_at, changed_by
+      FROM application_review_history
+      WHERE application_id = ?
+      ORDER BY changed_at ASC, id ASC
+    `).bind(applicationId).all()
+
     const { responses_json: responsesJson, tags_json: tagsJson, ...summary } = application
     try {
-      return apiJson({ application: { ...summary, responses: parseResponses(responsesJson), tags: parseTags(tagsJson), photos: signPhotoUrls(env, photos.results) } })
+      return apiJson({ application: {
+        ...summary,
+        responses: parseResponses(responsesJson),
+        tags: parseTags(tagsJson),
+        photos: signPhotoUrls(env, photos.results),
+        history: history.results.map(({ previous_tags_json: previousTags, new_tags_json: newTags, ...entry }) => ({
+          ...entry, previous_tags: parseTags(previousTags), new_tags: parseTags(newTags),
+        })),
+      } })
     } catch (error) {
       console.error('provider.imagekit_signing_failed', { error, applicationId })
       return apiJson({ error: 'Applicant photos could not be loaded from ImageKit.', code: 'IMAGEKIT_ERROR' }, { status: 502 })
@@ -205,13 +234,39 @@ async function handleApi(request, env, url) {
     if (!STATUSES.includes(status) || notes.length > 10000 || !tags) {
       return apiJson({ error: 'Invalid review update.', code: 'VALIDATION_ERROR' }, { status: 400 })
     }
-    const result = await env.DB.prepare(`
-      UPDATE applicant_details
-      SET application_status = ?, admin_notes = ?, tags_json = ?, reviewed_at = CURRENT_TIMESTAMP, reviewed_by = ?
+    const existing = await env.DB.prepare(`
+      SELECT application_status, admin_notes, tags_json
+      FROM applicant_details
       WHERE application_id = ?
-    `).bind(status, notes, JSON.stringify(tags), auth.email, applicationId).run()
+    `).bind(applicationId).first()
+    if (!existing) return apiJson({ error: 'Application not found.' }, { status: 404 })
+
+    const changedAt = new Date().toISOString()
+    const tagsJson = JSON.stringify(tags)
+    const [, result] = await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO application_review_history (
+          application_id, previous_status, new_status, previous_notes, new_notes,
+          previous_tags_json, new_tags_json, changed_at, changed_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(applicationId, existing.application_status, status, existing.admin_notes || '', notes, existing.tags_json || '[]', tagsJson, changedAt, auth.email),
+      env.DB.prepare(`
+        UPDATE applicant_details
+        SET application_status = ?, admin_notes = ?, tags_json = ?, reviewed_at = ?, reviewed_by = ?
+        WHERE application_id = ?
+      `).bind(status, notes, tagsJson, changedAt, auth.email, applicationId),
+    ])
     if (!result.meta.changes) return apiJson({ error: 'Application not found.' }, { status: 404 })
-    return apiJson({ success: true })
+    return apiJson({ success: true, review: {
+      previous_status: existing.application_status,
+      new_status: status,
+      previous_notes: existing.admin_notes || '',
+      new_notes: notes,
+      previous_tags: parseTags(existing.tags_json),
+      new_tags: tags,
+      changed_at: changedAt,
+      changed_by: auth.email,
+    } })
   }
 
   if (match && request.method === 'DELETE') {
