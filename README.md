@@ -110,6 +110,7 @@ Before exposing `/apply` publicly, apply the security migration:
 npx wrangler d1 execute nexa-production --remote --file migrations/0003_public_submission_security.sql
 npx wrangler d1 execute nexa-production --remote --file migrations/0004_confirmation_email.sql
 npx wrangler d1 execute nexa-production --remote --file migrations/0005_application_recovery.sql
+npx wrangler d1 execute nexa-production --remote --file migrations/0006_application_access.sql
 ```
 
 Create a Cloudflare Turnstile widget in Managed mode for the production hostname, then configure
@@ -127,6 +128,10 @@ token, validates PNG/JPEG signatures, enforces every form field and photo slot s
 changes an application from `pending_upload` to `submitted` after all required photos are present.
 Replacing an unfinished application requires its existing upload token or a 60-minute, single-use
 recovery token delivered to the applicant's email address.
+Before the form proceeds beyond its first section, the applicant requests a secure email link. The
+public response is identical for new, unfinished and submitted email addresses; only the mailbox
+owner receives the applicable instruction. JSON and multipart request bodies are size-limited while
+streaming and are rejected before JSON or form-data parsing when they exceed their route limit.
 New candidate photos are marked private in ImageKit. The admin Worker returns five-minute signed
 URLs and therefore needs its own copy of the ImageKit private key:
 

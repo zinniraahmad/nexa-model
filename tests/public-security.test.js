@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { applicationSections, declarationFields } from '../src/applicationForm.js'
-import { authorizePendingReplacement, detectImageMime, parsePhotoSlot, validateAnswers } from '../src/worker.js'
+import { authorizePendingReplacement, detectImageMime, handleApplicationAccess, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
 
 function validValue(field) {
   if (field.type === 'checkbox') return [field.options[0]]
@@ -119,4 +120,87 @@ test('accepts possession of the existing upload token even after its upload wind
   const DB = await replacementDatabase({ uploadToken: 'expired-upload-token' })
   const request = new Request('https://nexa-model.com/api/apply', { headers: { Authorization: 'Bearer expired-upload-token' } })
   assert.equal(await authorizePendingReplacement(request, { DB }, 'application-2', 'rotated-hash', '2099-01-01 00:00:00'), 'upload_token')
+})
+
+function accessDatabase(existing) {
+  return {
+    prepare(sql) {
+      return {
+        bind() {
+          return {
+            async first() {
+              return sql.includes('SELECT a.application_id') ? existing : null
+            },
+            async run() {
+              return { meta: { changes: 1 } }
+            },
+          }
+        },
+      }
+    },
+  }
+}
+
+test('returns the same public access response for new, pending and submitted emails', async (context) => {
+  context.mock.method(globalThis, 'fetch', async (url) => {
+    if (String(url).includes('siteverify')) return Response.json({ success: true })
+    return new Response('', { status: 200 })
+  })
+  const states = [
+    null,
+    { application_id: 'pending-id', full_name: 'Pending Applicant', email: 'candidate@example.com', application_status: 'pending_upload' },
+    { application_id: 'submitted-id', full_name: 'Submitted Applicant', email: 'candidate@example.com', application_status: 'submitted' },
+  ]
+  const responses = []
+  for (const existing of states) {
+    const request = new Request('https://nexa-model.com/api/application-access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.10' },
+      body: JSON.stringify({ email: 'candidate@example.com', turnstile_token: 'verified-token' }),
+    })
+    const response = await handleApplicationAccess(request, {
+      DB: accessDatabase(existing),
+      TURNSTILE_SECRET_KEY: 'test-secret',
+      RESEND_API_KEY: 'test-resend-key',
+      EMAIL_FROM: 'Nexa Model <applications@nexa-model.com>',
+      PUBLIC_SITE_URL: 'https://nexa-model.com',
+    })
+    responses.push({ status: response.status, body: await response.json() })
+  }
+  assert.deepEqual(responses[1], responses[0])
+  assert.deepEqual(responses[2], responses[0])
+  assert.equal(responses[0].status, 202)
+})
+
+test('rejects oversized bodies before JSON and multipart parsing', async () => {
+  const streamed = new Request('https://nexa-model.com/api/apply', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '123456',
+  })
+  const limited = await readRequestBody(streamed, 5)
+  assert.equal(limited.response.status, 413)
+
+  const oversizedJson = new Request('https://nexa-model.com/api/apply', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': '999999' }, body: '{}',
+  })
+  assert.equal((await parseJsonRequest(oversizedJson, 100)).response.status, 413)
+
+  const oversizedMultipart = new Request('https://nexa-model.com/api/upload', {
+    method: 'POST', headers: { 'Content-Type': 'multipart/form-data; boundary=test', 'Content-Length': '20000000' }, body: '--test--',
+  })
+  assert.equal((await parseMultipartRequest(oversizedMultipart)).response.status, 413)
+})
+
+test('privacy notice covers the reviewed bilingual PDPA disclosures', () => {
+  const notice = readFileSync(new URL('../src/pages/Privacy.jsx', import.meta.url), 'utf8')
+  for (const requiredDisclosure of [
+    'Zinnira Ahmad', 'alamat IP',
+    'Required and optional information', 'Maklumat wajib dan pilihan',
+    'Cloudflare', 'ImageKit', 'Resend', 'WhatsApp', 'Google Drive',
+    'Processing outside Malaysia', 'Pemprosesan di luar Malaysia',
+    'aduan@pdp.gov.my', 'significant harm', 'kemudaratan ketara',
+  ]) {
+    assert.ok(notice.includes(requiredDisclosure), `Missing privacy disclosure: ${requiredDisclosure}`)
+  }
+  assert.doesNotMatch(notice, /\bSSM\b|registered business number|nombor (?:perniagaan|pendaftaran)/i)
+  assert.match(declarationFields.find((field) => field.key === 'privacy_notice_consent').label, /outside Malaysia/i)
 })

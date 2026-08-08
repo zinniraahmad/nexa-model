@@ -4,6 +4,11 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
 const UPLOAD_TOKEN_TTL_MS = 60 * 60 * 1000
 const RECOVERY_TOKEN_TTL_MS = 60 * 60 * 1000
 const MAX_JSON_BYTES = 100_000
+const MAX_ACCESS_REQUEST_BYTES = 4 * 1024
+const MAX_APPLY_REQUEST_BYTES = 120 * 1024
+const MAX_FINALIZE_REQUEST_BYTES = 4 * 1024
+const MAX_MULTIPART_REQUEST_BYTES = (10 * 1024 * 1024) + (64 * 1024)
+const APPLICATION_ACCESS_MESSAGE = 'If the address can continue, instructions have been sent to that email. Check the inbox and spam folder. / Jika alamat tersebut boleh diteruskan, arahan telah dihantar ke e-mel berkenaan. Semak peti masuk dan folder spam.'
 const IMAGE_SIGNATURES = [
   { mime: 'image/png', test: (bytes) => bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a },
   { mime: 'image/jpeg', test: (bytes) => bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff },
@@ -17,6 +22,78 @@ function json(data, init = {}) {
   const headers = new Headers(init.headers)
   headers.set('Cache-Control', 'no-store')
   return Response.json(data, { ...init, headers })
+}
+
+function requestTooLarge() {
+  return json({ success: false, error: 'Request is too large.' }, { status: 413 })
+}
+
+async function readRequestBody(request, maxBytes) {
+  const declaredLength = request.headers.get('Content-Length')
+  if (declaredLength !== null) {
+    const length = Number(declaredLength)
+    if (!Number.isFinite(length) || length < 0) return { response: json({ success: false, error: 'Invalid Content-Length header.' }, { status: 400 }) }
+    if (length > maxBytes) return { response: requestTooLarge() }
+  }
+
+  if (!request.body) return { bytes: new Uint8Array() }
+  const reader = request.body.getReader()
+  const chunks = []
+  let total = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {})
+      return { response: requestTooLarge() }
+    }
+    chunks.push(value)
+  }
+
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return { bytes }
+}
+
+async function parseJsonRequest(request, maxBytes) {
+  if (!request.headers.get('Content-Type')?.toLowerCase().startsWith('application/json')) {
+    return { response: json({ success: false, error: 'Content-Type must be application/json.' }, { status: 415 }) }
+  }
+  const body = await readRequestBody(request, maxBytes)
+  if (body.response) return body
+  try {
+    return { value: JSON.parse(new TextDecoder().decode(body.bytes)) }
+  } catch {
+    return { response: json({ success: false, error: 'Request body must contain valid JSON.' }, { status: 400 }) }
+  }
+}
+
+async function parseMultipartRequest(request) {
+  const contentType = request.headers.get('Content-Type') || ''
+  if (!contentType.toLowerCase().startsWith('multipart/form-data;')) {
+    return { response: json({ success: false, error: 'Content-Type must be multipart/form-data.' }, { status: 415 }) }
+  }
+  const body = await readRequestBody(request, MAX_MULTIPART_REQUEST_BYTES)
+  if (body.response) return body
+  try {
+    const bufferedRequest = new Request(request.url, { method: 'POST', headers: { 'Content-Type': contentType }, body: body.bytes })
+    return { value: await bufferedRequest.formData() }
+  } catch {
+    return { response: json({ success: false, error: 'Request body must contain valid multipart form data.' }, { status: 400 }) }
+  }
+}
+
+function applicationAccessAccepted() {
+  return json({ success: true, message: APPLICATION_ACCESS_MESSAGE }, { status: 202 })
+}
+
+function applicationCredentialRequired() {
+  return json({ success: false, error: 'A valid secure email link or existing upload session is required. Request a new link from the first section of the form.', access_required: true }, { status: 403 })
 }
 
 function clientIp(request) {
@@ -173,6 +250,128 @@ async function ensurePendingRecoveryEmail(request, env, applicant) {
   return false
 }
 
+async function claimApplicationAccessToken(env, email, purpose) {
+  const token = createUploadToken()
+  const tokenHash = await sha256(token)
+  const expiresAt = new Date(Date.now() + RECOVERY_TOKEN_TTL_MS).toISOString().replace('T', ' ').replace('Z', '')
+  const result = await env.DB.prepare(`
+    INSERT INTO application_access_tokens (email, purpose, token_hash, expires_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(email, purpose) DO UPDATE SET
+      token_hash = excluded.token_hash,
+      expires_at = excluded.expires_at,
+      used_at = NULL,
+      created_at = CURRENT_TIMESTAMP
+    WHERE application_access_tokens.used_at IS NOT NULL
+       OR application_access_tokens.expires_at <= CURRENT_TIMESTAMP
+  `).bind(email, purpose, tokenHash, expiresAt).run()
+  return databaseChanged(result) ? { token, tokenHash } : null
+}
+
+async function clearApplicationAccessToken(env, email, purpose, tokenHash) {
+  await env.DB.prepare('DELETE FROM application_access_tokens WHERE email = ? COLLATE NOCASE AND purpose = ? AND token_hash = ?')
+    .bind(email, purpose, tokenHash).run().catch(() => {})
+}
+
+async function ensureNewApplicationAccessEmail(request, env, email) {
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false
+  const claimed = await claimApplicationAccessToken(env, email, 'new_application')
+  if (!claimed) return true
+  const replyTo = env.EMAIL_REPLY_TO || 'itszinniraahmad@gmail.com'
+  const accessUrl = new URL('/apply', env.PUBLIC_SITE_URL || request.url)
+  accessUrl.searchParams.set('access', claimed.token)
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: env.EMAIL_FROM,
+        to: [email],
+        reply_to: replyTo,
+        subject: 'Continue your Nexa Model application',
+        text: `Use this single-use link within 60 minutes to continue your Nexa Model application:\n\n${accessUrl}\n\nIf you did not request this, ignore this email.\n\nGunakan pautan sekali guna ini dalam masa 60 minit untuk meneruskan permohonan Nexa Model anda. Jika anda tidak membuat permintaan ini, abaikan e-mel ini.\n\nPrivacy enquiries / Pertanyaan privasi: ${replyTo}`,
+        html: `<p>Use this single-use link within 60 minutes to continue your Nexa Model application:</p><p><a href="${escapeHtml(accessUrl.toString())}">Continue your application</a></p><p>If you did not request this, ignore this email.</p><hr><p>Gunakan pautan sekali guna ini dalam masa 60 minit untuk meneruskan permohonan Nexa Model anda.</p><p><a href="${escapeHtml(accessUrl.toString())}">Teruskan permohonan anda</a></p><p>Jika anda tidak membuat permintaan ini, abaikan e-mel ini.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
+      }),
+    })
+    if (response.ok) return true
+    console.error('Application access email provider rejected request', { status: response.status })
+  } catch (error) {
+    console.error('Application access email failed', { error })
+  }
+  await clearApplicationAccessToken(env, email, 'new_application', claimed.tokenHash)
+  return false
+}
+
+async function ensureSubmittedApplicationNoticeEmail(env, email) {
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false
+  const claimed = await claimApplicationAccessToken(env, email, 'submitted_notice')
+  if (!claimed) return true
+  const replyTo = env.EMAIL_REPLY_TO || 'itszinniraahmad@gmail.com'
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: env.EMAIL_FROM,
+        to: [email],
+        reply_to: replyTo,
+        subject: 'Nexa Model application access request',
+        text: `We received a request to continue a Nexa Model application using this email address. An application is already on file, so no new access link was issued. If you need help, contact Nexa Model through its official channel.\n\nKami menerima permintaan untuk meneruskan permohonan Nexa Model menggunakan alamat e-mel ini. Permohonan telah pun direkodkan, maka tiada pautan akses baharu dikeluarkan. Jika anda memerlukan bantuan, hubungi Nexa Model melalui saluran rasmi.\n\nPrivacy enquiries / Pertanyaan privasi: ${replyTo}`,
+        html: `<p>We received a request to continue a Nexa Model application using this email address.</p><p>An application is already on file, so no new access link was issued. If you need help, contact Nexa Model through its official channel.</p><hr><p>Kami menerima permintaan untuk meneruskan permohonan Nexa Model menggunakan alamat e-mel ini.</p><p>Permohonan telah pun direkodkan, maka tiada pautan akses baharu dikeluarkan. Jika anda memerlukan bantuan, hubungi Nexa Model melalui saluran rasmi.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
+      }),
+    })
+    if (response.ok) return true
+    console.error('Submitted application notice email provider rejected request', { status: response.status })
+  } catch (error) {
+    console.error('Submitted application notice email failed', { error })
+  }
+  await clearApplicationAccessToken(env, email, 'submitted_notice', claimed.tokenHash)
+  return false
+}
+
+async function consumeNewApplicationAccess(request, env, email) {
+  const token = bearerToken(request)
+  if (!token || token.length > 200) return false
+  const tokenHash = await sha256(token)
+  const result = await env.DB.prepare(`
+    UPDATE application_access_tokens SET used_at = CURRENT_TIMESTAMP
+    WHERE email = ? COLLATE NOCASE
+      AND purpose = 'new_application'
+      AND token_hash = ?
+      AND used_at IS NULL
+      AND expires_at > CURRENT_TIMESTAMP
+  `).bind(email, tokenHash).run()
+  return databaseChanged(result)
+}
+
+async function handleApplicationAccess(request, env) {
+  if (!await enforceRateLimit(env.APPLY_RATE_LIMITER, `${clientIp(request)}:application-access`)) return rateLimited('application-access')
+  const parsed = await parseJsonRequest(request, MAX_ACCESS_REQUEST_BYTES)
+  if (parsed.response) return parsed.response
+  const email = typeof parsed.value?.email === 'string' ? parsed.value.email.trim().toLowerCase() : ''
+  if (!EMAIL_PATTERN.test(email) || email.length > 254) {
+    return json({ success: false, error: 'A valid email address is required.' }, { status: 400 })
+  }
+  if (!await verifyTurnstile(request, env, parsed.value.turnstile_token)) {
+    return json({ success: false, error: 'Security verification failed. Please refresh the verification and try again.' }, { status: 400 })
+  }
+
+  try {
+    const existing = await env.DB.prepare(`
+      SELECT a.application_id, a.full_name, a.email, d.application_status
+      FROM applicants a JOIN applicant_details d ON d.application_id = a.application_id
+      WHERE a.email = ? COLLATE NOCASE LIMIT 1
+    `).bind(email).first()
+    if (!existing) await ensureNewApplicationAccessEmail(request, env, email)
+    else if (existing.application_status === 'pending_upload') await ensurePendingRecoveryEmail(request, env, existing)
+    else await ensureSubmittedApplicationNoticeEmail(env, existing.email)
+  } catch (error) {
+    // Keep the public response uniform; operational failures are visible only in logs.
+    console.error('Application access request failed', { error })
+  }
+  return applicationAccessAccepted()
+}
+
 async function verifyTurnstile(request, env, token) {
   if (!env.TURNSTILE_SECRET_KEY || !token || typeof token !== 'string' || token.length > 2048) return false
   try {
@@ -273,8 +472,10 @@ async function deleteImageKitFiles(env, applicationId) {
 async function handleApply(request, env) {
   if (!await enforceRateLimit(env.APPLY_RATE_LIMITER, `${clientIp(request)}:apply`)) return rateLimited('apply')
   try {
-    const body = await request.json()
-    const answers = body.answers
+    const parsed = await parseJsonRequest(request, MAX_APPLY_REQUEST_BYTES)
+    if (parsed.response) return parsed.response
+    const body = parsed.value
+    const answers = body?.answers
     const validationError = validateAnswers(answers)
     if (validationError) return json({ success: false, error: validationError }, { status: 400 })
     const responsesJson = JSON.stringify(answers)
@@ -284,36 +485,20 @@ async function handleApply(request, env) {
     const email = String(answers.email).trim().toLowerCase()
     const phone = String(answers.phone).trim()
     const location = String(answers.current_location).trim()
-    if (!await verifyTurnstile(request, env, body.turnstile_token)) {
-      return json({ success: false, error: 'Security verification failed. Please refresh the verification and try again.' }, { status: 400 })
-    }
-
     const existing = await env.DB.prepare(`
       SELECT a.application_id, a.full_name, a.email, d.application_status
       FROM applicants a JOIN applicant_details d ON d.application_id = a.application_id
       WHERE a.email = ? COLLATE NOCASE LIMIT 1
     `).bind(email).first()
-    if (existing && existing.application_status !== 'pending_upload') {
-      return json({ success: false, error: 'A new application could not be started. If you previously applied, your application remains on file. Contact Nexa Model through its official direct messages if you need help.' }, { status: 409 })
-    }
     const uploadToken = createUploadToken()
     const uploadTokenHash = await sha256(uploadToken)
     const uploadExpiresAt = new Date(Date.now() + UPLOAD_TOKEN_TTL_MS).toISOString().replace('T', ' ').replace('Z', '')
     let applicationId = existing?.application_id
 
     if (existing) {
+      if (existing.application_status !== 'pending_upload') return applicationCredentialRequired()
       const authorization = await authorizePendingReplacement(request, env, applicationId, uploadTokenHash, uploadExpiresAt)
-      if (!authorization) {
-        const recoveryAvailable = await ensurePendingRecoveryEmail(request, env, existing)
-        if (!recoveryAvailable) {
-          return json({ success: false, error: 'Application recovery is temporarily unavailable. Please try again later.' }, { status: 503 })
-        }
-        return json({
-          success: false,
-          error: 'A new application could not be started. If this email belongs to an unfinished application, a single-use recovery link has been sent or is still active. Check the inbox and spam folder, then open the link within 60 minutes.',
-          recovery_required: true,
-        }, { status: 409 })
-      }
+      if (!authorization) return applicationCredentialRequired()
       await deleteImageKitFiles(env, applicationId)
       await env.DB.batch([
         env.DB.prepare('DELETE FROM applicant_photos WHERE application_id = ?').bind(applicationId),
@@ -323,6 +508,7 @@ async function handleApply(request, env) {
           .bind(responsesJson, uploadTokenHash, uploadExpiresAt, applicationId),
       ])
     } else {
+      if (!await consumeNewApplicationAccess(request, env, email)) return applicationCredentialRequired()
       applicationId = crypto.randomUUID()
       await env.DB.batch([
         env.DB.prepare(`INSERT INTO applicants (application_id, full_name, email, phone, current_location) VALUES (?, ?, ?, ?, ?)`)
@@ -343,7 +529,9 @@ async function handleApply(request, env) {
 async function handleUpload(request, env) {
   if (!await enforceRateLimit(env.UPLOAD_RATE_LIMITER, `${clientIp(request)}:upload`)) return rateLimited('upload')
   try {
-    const formData = await request.formData()
+    const parsed = await parseMultipartRequest(request)
+    if (parsed.response) return parsed.response
+    const formData = parsed.value
     const file = formData.get('file')
     const applicationId = String(formData.get('application_id') || '')
     const slot = parsePhotoSlot(formData.get('photo_type'))
@@ -399,8 +587,10 @@ async function handleUpload(request, env) {
 async function handleFinalize(request, env) {
   if (!await enforceRateLimit(env.APPLY_RATE_LIMITER, `${clientIp(request)}:finalize`)) return rateLimited('finalize')
   try {
-    const body = await request.json()
-    const applicationId = String(body.application_id || '')
+    const parsed = await parseJsonRequest(request, MAX_FINALIZE_REQUEST_BYTES)
+    if (parsed.response) return parsed.response
+    const body = parsed.value
+    const applicationId = String(body?.application_id || '')
     const applicant = await requireUploadAccess(request, env, applicationId, true)
     if (!applicant) {
       return json({ success: false, error: 'Upload session is invalid or expired.' }, { status: 403 })
@@ -448,6 +638,7 @@ export default {
     if (url.pathname === '/api/config' && request.method === 'GET') {
       return json({ turnstile_site_key: env.TURNSTILE_SITE_KEY || '' })
     }
+    if (url.pathname === '/api/application-access' && request.method === 'POST') return handleApplicationAccess(request, env)
     if (url.pathname === '/api/apply' && request.method === 'POST') return handleApply(request, env)
     if (url.pathname === '/api/upload' && request.method === 'POST') return handleUpload(request, env)
     if (url.pathname === '/api/finalize' && request.method === 'POST') return handleFinalize(request, env)
@@ -456,4 +647,4 @@ export default {
   },
 }
 
-export { authorizePendingReplacement, detectImageMime, parsePhotoSlot, validateAnswers }
+export { applicationAccessAccepted, applicationCredentialRequired, authorizePendingReplacement, detectImageMime, handleApplicationAccess, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers }

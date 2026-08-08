@@ -17,6 +17,7 @@ const ACCEPTED_EXTENSIONS = ['.png', '.jpg', '.jpeg']
 const VALID_EMAIL = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
 const PENDING_SESSION_KEY = 'nexa_pending_upload_session'
 const RECOVERY_SESSION_KEY = 'nexa_application_recovery_token'
+const ACCESS_SESSION_KEY = 'nexa_application_access_token'
 
 function readPendingUploadSession() {
   if (typeof window === 'undefined') return null
@@ -63,6 +64,29 @@ function recoveryTokenFromUrl() {
 function clearRecoveryToken() {
   try {
     window.sessionStorage.removeItem(RECOVERY_SESSION_KEY)
+  } catch {
+    // Nothing else is required when browser storage is unavailable.
+  }
+}
+
+function accessTokenFromUrl() {
+  if (typeof window === 'undefined') return ''
+  try {
+    const urlToken = new URL(window.location.href).searchParams.get('access') || ''
+    if (urlToken && urlToken.length <= 200) {
+      window.sessionStorage.setItem(ACCESS_SESSION_KEY, urlToken)
+      return urlToken
+    }
+    const sessionToken = window.sessionStorage.getItem(ACCESS_SESSION_KEY) || ''
+    return sessionToken.length <= 200 ? sessionToken : ''
+  } catch {
+    return ''
+  }
+}
+
+function clearAccessToken() {
+  try {
+    window.sessionStorage.removeItem(ACCESS_SESSION_KEY)
   } catch {
     // Nothing else is required when browser storage is unavailable.
   }
@@ -232,7 +256,7 @@ function Field({ field, value, onChange, onBlur }) {
   return <label className={`text-field${showEmailWarning ? ' field-invalid' : ''}`} htmlFor={fieldId}>{label}<input id={fieldId} type={field.type || 'text'} value={value || ''} onChange={(event) => onChange(event.target.value)} onBlur={() => onBlur?.(value)} required={field.required} min={field.min} max={field.max} maxLength={field.maxLength} autoComplete={field.autocomplete} placeholder={field.placeholder} pattern={field.type === 'email' ? '[^\\s@]+@[^\\s@]+\\.[A-Za-z]{2,}' : undefined} />{showEmailWarning && <small className="field-warning" role="alert">Please enter a complete email address, for example name@gmail.com or name@yahoo.com.<em>Sila masukkan alamat e-mel yang lengkap, contohnya nama@gmail.com atau nama@yahoo.com.</em></small>}</label>
 }
 
-function FormSection({ section, answers, setAnswer, onBack, onNext, onFieldBlur }) {
+function FormSection({ section, answers, setAnswer, onBack, onNext, onFieldBlur, children, submitting = false, nextLabel = 'Continue' }) {
   function submit(event) {
     event.preventDefault()
     onNext()
@@ -241,7 +265,8 @@ function FormSection({ section, answers, setAnswer, onBack, onNext, onFieldBlur 
     <header className="form-section-heading"><p className="section-label">{section.eyebrow}</p><h2>{section.title}</h2><em className="section-title-bm">{section.titleBm}</em><p>{section.description}</p><p className="bm-text">{section.descriptionBm}</p></header>
     <SectionExtras sectionId={section.id} />
     <div className="form-fields">{section.fields.map((field) => <Field key={field.key} field={field} value={answers[field.key]} onChange={(value) => setAnswer(field.key, value)} onBlur={(value) => onFieldBlur?.(field, value)} />)}</div>
-    <div className="application-actions"><button className="underlined-button" type="button" onClick={onBack}>Back</button><button className="button button-dark" type="submit">Continue <ArrowRight size={17} /></button></div>
+    {children}
+    <div className="application-actions"><button className="underlined-button" type="button" onClick={onBack} disabled={submitting}>Back</button><button className="button button-dark" type="submit" disabled={submitting}>{submitting ? <><LoaderCircle className="spin" size={17} /> Sending</> : <>{nextLabel} <ArrowRight size={17} /></>}</button></div>
   </form>
 }
 
@@ -259,6 +284,7 @@ export default function TalentApplication() {
   const [turnstileResetKey, setTurnstileResetKey] = useState(0)
   const [uploadToken, setUploadToken] = useState('')
   const [recoveryToken, setRecoveryToken] = useState(recoveryTokenFromUrl)
+  const [emailAccessToken, setEmailAccessToken] = useState(accessTokenFromUrl)
 
   const photoStep = applicationSections.length + 1
   const declarationStep = photoStep + 1
@@ -276,11 +302,12 @@ export default function TalentApplication() {
   }, [visualIndex])
 
   useEffect(() => {
-    if (!recoveryToken) return
+    if (!recoveryToken && !emailAccessToken) return
     const url = new URL(window.location.href)
     url.searchParams.delete('recovery')
+    url.searchParams.delete('access')
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
-  }, [recoveryToken])
+  }, [recoveryToken, emailAccessToken])
 
   function moveTo(nextStep) {
     setMessage('')
@@ -292,10 +319,38 @@ export default function TalentApplication() {
     setAnswers((current) => ({ ...current, [key]: value }))
   }
 
+  function applicationCredential() {
+    const normalizedEmail = String(answers.email || '').trim().toLowerCase()
+    const pendingSession = readPendingUploadSession()
+    return emailAccessToken || recoveryToken || (pendingSession?.email === normalizedEmail ? pendingSession.uploadToken : '')
+  }
+
   async function continueSection() {
     if (step === 1 && !VALID_EMAIL.test(String(answers.email || ''))) return setMessage('Please enter a complete email address with a valid domain, for example name@gmail.com or name@yahoo.com.')
     if (step === 1 && answers.age_gate !== 'Yes') return setMessage('This application is only available to candidates aged 18 to 30.')
     if (step === 1 && answers.voluntary_application !== 'Yes') return setMessage('You must be applying voluntarily to continue.')
+    if (step === 1 && !applicationCredential()) {
+      if (!turnstileToken) return setMessage('Please complete the security verification so we can email your secure application link.')
+      setSubmitting(true)
+      setMessage('Sending secure access instructions...')
+      try {
+        const response = await fetch('/api/application-access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: answers.email, turnstile_token: turnstileToken }),
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to send secure access instructions.')
+        setMessage(data.message || 'Check your email and spam folder for secure access instructions.')
+      } catch (error) {
+        setMessage(error.message || 'Unable to send secure access instructions.')
+      } finally {
+        setTurnstileToken('')
+        setTurnstileResetKey((current) => current + 1)
+        setSubmitting(false)
+      }
+      return
+    }
     const currentSection = applicationSections[step - 1]
     const missingSelect = currentSection?.fields.find((field) => field.type === 'select' && field.required && !answers[field.key])
     if (missingSelect) return setMessage(`Please select an option for ${missingSelect.label}.`)
@@ -338,8 +393,10 @@ export default function TalentApplication() {
 
   async function submitApplication(event) {
     event.preventDefault()
-    if (!applicationId && !turnstileToken) {
-      setMessage('Please complete the security verification before submitting.')
+    if (!applicationId && !applicationCredential()) {
+      setStep(1)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      setMessage('Request and open a secure application link before submitting.')
       return
     }
     setSubmitting(true)
@@ -349,24 +406,37 @@ export default function TalentApplication() {
       let token = uploadToken
       if (!id) {
         const normalizedEmail = String(answers.email || '').trim().toLowerCase()
-        const pendingSession = readPendingUploadSession()
-        const replacementCredential = recoveryToken || (pendingSession?.email === normalizedEmail ? pendingSession.uploadToken : '')
+        const replacementCredential = applicationCredential()
         const headers = { 'Content-Type': 'application/json' }
         if (replacementCredential) headers.Authorization = `Bearer ${replacementCredential}`
         const response = await fetch('/api/apply', {
           method: 'POST', headers,
           body: JSON.stringify({
             full_name: answers.full_name, email: answers.email, phone: answers.phone,
-            current_location: answers.current_location, answers, turnstile_token: turnstileToken,
+            current_location: answers.current_location, answers,
           }),
         })
         const data = await response.json().catch(() => ({}))
+        if (!response.ok || !data.success) {
+          if (data.access_required) {
+            clearAccessToken()
+            clearRecoveryToken()
+            clearPendingUploadSession()
+            setEmailAccessToken('')
+            setRecoveryToken('')
+            setStep(1)
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+          }
+          throw new Error(data.error || 'Unable to save application.')
+        }
         if (recoveryToken) {
           clearRecoveryToken()
           setRecoveryToken('')
         }
-        if (data.recovery_required) clearPendingUploadSession()
-        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to save application.')
+        if (emailAccessToken) {
+          clearAccessToken()
+          setEmailAccessToken('')
+        }
         id = data.application_id
         token = data.upload_token
         setApplicationId(id)
@@ -421,11 +491,11 @@ export default function TalentApplication() {
       {alreadySubmitted && <section className="success-step duplicate-application"><div className="success-icon"><Check size={28} /></div><p className="section-label">APPLICATION ALREADY RECEIVED</p><h2>Your application has been submitted.</h2><p>Thank you for your patience. Nexa Model will contact you through WhatsApp if you are shortlisted.</p><p className="bm-text">Permohonan anda telah dihantar. Terima kasih atas kesabaran anda. Nexa Model akan menghubungi anda melalui WhatsApp sekiranya anda disenarai pendek.</p><Link className="button button-dark" to="/">Return home</Link></section>}
       {!alreadySubmitted && <>
       {!alreadySubmitted && step === 0 && <Introduction accepted={introductionAccepted} setAccepted={setIntroductionAccepted} onContinue={() => moveTo(1)} />}
-      {!alreadySubmitted && step >= 1 && step <= applicationSections.length && <FormSection section={applicationSections[step - 1]} answers={answers} setAnswer={setAnswer} onBack={() => moveTo(step - 1)} onNext={continueSection} />}
+      {!alreadySubmitted && step >= 1 && step <= applicationSections.length && <FormSection section={applicationSections[step - 1]} answers={answers} setAnswer={setAnswer} onBack={() => moveTo(step - 1)} onNext={continueSection} submitting={step === 1 && submitting} nextLabel={step === 1 && !applicationCredential() ? 'Email secure link' : 'Continue'}>{step === 1 && !applicationCredential() && <TurnstileWidget onToken={setTurnstileToken} resetKey={turnstileResetKey} />}</FormSection>}
 
       {step === photoStep && <section className="photo-step expanded-form"><header className="form-section-heading"><p className="section-label">SECTION 10</p><h2>Photo Submission</h2><em className="section-title-bm">Penghantaran Gambar</em><p>Select one or multiple recent, clear and unfiltered PNG, JPG or JPEG images. Maximum 10 MB each.</p><p className="bm-text">Pilih satu atau beberapa gambar PNG, JPG atau JPEG yang terkini, jelas dan tanpa filter. Maksimum 10 MB setiap gambar.</p></header><div className="photo-field-list">{photoFields.map((field) => <label className="upload-zone compact-upload" key={field.key}><ImagePlus size={25} /><strong>{field.label}{field.required && <b className="required-mark"> *</b>}</strong><em className="bm-text">{field.labelBm}</em><span>{photos[field.key]?.length ? `${photos[field.key].length} selected — click to replace` : field.min === field.max ? `${field.min} file(s)` : `${field.min}–${field.max} file(s)`}</span>{photos[field.key]?.length > 0 && <div className="photo-preview-grid">{photos[field.key].map((file) => <FileThumbnail key={`${file.name}-${file.lastModified}`} file={file} />)}</div>}<input type="file" accept=".png,.jpg,.jpeg" multiple={field.max > 1} onChange={(event) => selectPhotos(field, event)} /></label>)}</div><div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(step - 1)}>Back</button><button className="button button-dark" type="button" onClick={continueFromPhotos}>Continue <ArrowRight size={17} /></button></div></section>}
 
-      {step === declarationStep && <form className="application-form expanded-form" onSubmit={submitApplication}><header className="form-section-heading"><p className="section-label">SECTION 11</p><h2>Final Declaration</h2><em className="section-title-bm">Pengisytiharan Akhir</em><p>Review your information carefully before submitting.</p><p className="bm-text">Semak maklumat anda dengan teliti sebelum menghantar.</p><p className="privacy-form-link">Please review the <Link to="/privacy" target="_blank" rel="noreferrer">Privacy Notice / Notis Privasi</Link> before confirming.</p></header><div className="form-fields">{declarationFields.map((field) => <Field key={field.key} field={field} value={answers[field.key]} onChange={(value) => setAnswer(field.key, value)} />)}</div>{!applicationId && <TurnstileWidget onToken={setTurnstileToken} resetKey={turnstileResetKey} />}{Object.keys(uploadProgress).length > 0 && <div className="upload-progress-panel"><h3>Photo upload status <em>Status muat naik gambar</em></h3>{Object.entries(uploadProgress).map(([key, item]) => <div className={`upload-progress-row ${item.status}`} key={key}><div><span>{item.label}</span><b>{item.status === 'failed' ? 'Failed — retry submission' : `${item.uploaded}/${item.total} · ${item.status}`}</b></div><progress max={item.total} value={item.uploaded} /></div>)}</div>}<div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(photoStep)} disabled={submitting}>Back</button><button className="button button-dark" disabled={submitting}>{submitting ? <><LoaderCircle className="spin" size={17} /> Submitting</> : <>Submit application <ArrowRight size={17} /></>}</button></div></form>}
+      {step === declarationStep && <form className="application-form expanded-form" onSubmit={submitApplication}><header className="form-section-heading"><p className="section-label">SECTION 11</p><h2>Final Declaration</h2><em className="section-title-bm">Pengisytiharan Akhir</em><p>Review your information carefully before submitting.</p><p className="bm-text">Semak maklumat anda dengan teliti sebelum menghantar.</p><p className="privacy-form-link">Please review the <Link to="/privacy" target="_blank" rel="noreferrer">Privacy Notice / Notis Privasi</Link> before confirming.</p></header><div className="form-fields">{declarationFields.map((field) => <Field key={field.key} field={field} value={answers[field.key]} onChange={(value) => setAnswer(field.key, value)} />)}</div>{Object.keys(uploadProgress).length > 0 && <div className="upload-progress-panel"><h3>Photo upload status <em>Status muat naik gambar</em></h3>{Object.entries(uploadProgress).map(([key, item]) => <div className={`upload-progress-row ${item.status}`} key={key}><div><span>{item.label}</span><b>{item.status === 'failed' ? 'Failed — retry submission' : `${item.uploaded}/${item.total} · ${item.status}`}</b></div><progress max={item.total} value={item.uploaded} /></div>)}</div>}<div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(photoStep)} disabled={submitting}>Back</button><button className="button button-dark" disabled={submitting}>{submitting ? <><LoaderCircle className="spin" size={17} /> Submitting</> : <>Submit application <ArrowRight size={17} /></>}</button></div></form>}
 
       {step === successStep && <section className="success-step"><div className="success-icon"><Check size={28} /></div><p className="section-label">APPLICATION RECEIVED</p><h2>Thank you.</h2><p>Your application and photos have been submitted. If shortlisted, Nexa Model will contact you through WhatsApp.</p><p className="bm-text">Permohonan dan gambar anda telah diterima. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.</p><p className="reference-label">Your application reference <em>Rujukan permohonan anda</em></p><code>{applicationId}</code><small className="reference-help">Keep this reference for future communication with Nexa Model.<em>Simpan rujukan ini untuk urusan dengan Nexa Model pada masa hadapan.</em></small><Link className="button button-dark" to="/">Return home</Link></section>}
       </>}

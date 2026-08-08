@@ -101,7 +101,7 @@ export const applicationSections = [
 ]
 
 export const declarationFields = [
-  { key: 'privacy_notice_consent', type: 'checkbox', label: 'I have read and understood the Nexa Model Privacy Notice.', labelBm: 'Saya telah membaca dan memahami Notis Privasi Nexa Model.', options: ['I understand and agree.'], required: true },
+  { key: 'privacy_notice_consent', type: 'checkbox', label: 'I have read and understood the Nexa Model Privacy Notice, including necessary processing by the named providers outside Malaysia.', labelBm: 'Saya telah membaca dan memahami Notis Privasi Nexa Model, termasuk pemprosesan yang diperlukan oleh penyedia yang dinamakan di luar Malaysia.', options: ['I understand and agree.'], required: true },
   { key: 'accurate_information', type: 'checkbox', label: 'I confirm that the information provided is accurate.', labelBm: 'Saya mengesahkan maklumat yang diberikan adalah tepat.', options: ['I confirm.'], required: true },
   { key: 'no_guarantee_acknowledged', type: 'checkbox', label: 'I understand that submission does not guarantee selection, training completion or an assignment.', labelBm: 'Saya memahami permohonan tidak menjamin pemilihan, tamat latihan atau tugasan.', options: ['I understand.'], required: true },
   { key: 'whatsapp_consent', type: 'checkbox', label: 'I consent to being contacted through WhatsApp.', labelBm: 'Saya bersetuju untuk dihubungi melalui WhatsApp.', options: ['Yes, I consent.'], required: true },

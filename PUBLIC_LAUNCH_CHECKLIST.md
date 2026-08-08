@@ -13,11 +13,11 @@ The homepage is already reachable at `https://nexa-model.com` and the deployed a
 - [x] Make the mobile hamburger menu functional, including open/close state, keyboard support, focus handling and navigation links.
 - [x] Enable a permanent HTTP-to-HTTPS redirect using **SSL/TLS → Edge Certificates → Always Use HTTPS**. Verified in production on 8 August 2026: HTTP returns `301`, paths and query strings are preserved, and HTTPS completes with a valid certificate and no redirect loop.
 - [x] Use `nexa-model.com` as the canonical hostname and redirect `www.nexa-model.com` with a method-preserving `308`. Verified in production on 8 August 2026: root, paths, query strings and POST requests redirect correctly without loops.
-- [x] Align the homepage promise with the application requirements. The homepage now advises 20–30 minutes; the shared form/API schema requires at least 19 photos and permits up to 26. Source verified on 8 August 2026; include this change in the next production deployment.
+- [x] Align the homepage promise with the application requirements. The production homepage now advises 20–30 minutes; the shared form/API schema requires at least 19 photos and permits up to 26. Verified live on 8 August 2026.
 - [x] Prevent expired pending applications from being replaced using only a known email address and Turnstile. Production now requires the existing upload token or an emailed, single-use recovery token (valid for 60 minutes) before answers or uploaded photos can be replaced; tokens are hashed, rotated atomically and covered by regression tests.
-- [ ] Stop applicant-status/email enumeration. Return a uniform public response instead of revealing whether an email is new, has an active upload session or has already submitted.
-- [ ] Reject oversized JSON and multipart requests before fully parsing them. Keep the current post-parse field and 10 MB image checks as defence in depth.
-- [ ] Have the bilingual Privacy Notice reviewed against Malaysia's PDPA requirements. At minimum, verify the controller's full legal identity/contact details, technical data such as IP/security logs, required versus optional fields and consequences, WhatsApp/Google Drive providers, overseas processing/transfers, complaint handling and current breach-response obligations.
+- [x] Stop applicant-status/email enumeration. Section 1 now sends all valid access requests through a secure email flow and returns the same public `202` status/body whether the address is new, has a pending upload or has already submitted. Only the mailbox owner receives the applicable instruction. Verified in production on 8 August 2026.
+- [x] Reject oversized JSON and multipart requests before fully parsing them. Route-specific limits now check declared size and cap streamed bytes before calling `JSON.parse()` or `formData()`; post-parse schema and 10 MB image checks remain as defence in depth. Regression-tested and production `413` verified on 8 August 2026.
+- [x] Complete the bilingual Privacy Notice implementation review against Malaysia's PDPA requirements. The notice identifies Zinnira Ahmad as the data controller and publishes general/privacy electronic contacts, technical data and sources, mandatory/optional fields and consequences, Cloudflare/ImageKit/Resend/WhatsApp/Google Drive disclosures, overseas processing, rights and complaint handling, and current breach-notification commitments. Reviewed against official Act 709, Amendment Act A1727 and Commissioner guidance on 8 August 2026; obtain Malaysian legal advice if a formal compliance opinion is required.
 
 ## Important before accepting applications
 
@@ -51,11 +51,11 @@ The homepage is already reachable at `https://nexa-model.com` and the deployed a
 ## Verified on 8 August 2026
 
 - [x] Public and admin production builds complete successfully.
-- [x] All 5 public security regression tests pass.
+- [x] All 10 public security regression tests pass, including uniform application-access responses, replacement authorization, single-use tokens, pre-parse request-size enforcement and required Privacy Notice disclosures.
 - [x] No tracked `.env`, `.dev.vars`, private-key or credential file was found.
 - [x] Public Worker secret names are configured for Turnstile, ImageKit, Resend and confirmation-email settings; secret values were not read.
 - [x] Admin Worker has its ImageKit private-key secret configured.
-- [x] Production D1 has migrations 0001–0005 and all expected security indexes and recovery-token columns.
+- [x] Production D1 has migrations 0001–0006 and all expected security indexes, recovery-token columns and the single-use application-access table.
 - [x] Production `/api/config` returns a configured Turnstile site key with `Cache-Control: no-store`.
 - [x] Admin hostname is protected by Cloudflare Access before the admin application loads.
 - [x] Admin API independently validates Access JWT signature, issuer, audience, expiry and the staff email allowlist.
