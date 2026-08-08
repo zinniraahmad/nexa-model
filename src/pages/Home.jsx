@@ -96,7 +96,7 @@ export default function Home() {
           <Link className="button button-dark large-button" to="/apply">
             Start your application <MoveUpRight size={18} />
           </Link>
-          <small>It takes about 5-15 minutes. Personal information sharing is required with your consents.</small>
+          <small>It takes about 20-30 minutes. Personal information sharing is required with your consents.</small>
         </section>
       </main>
       <Footer />

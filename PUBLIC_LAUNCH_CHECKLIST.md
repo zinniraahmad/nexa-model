@@ -11,8 +11,8 @@ The homepage is already reachable at `https://nexa-model.com` and the deployed a
 ## Launch blockers
 
 - [x] Make the mobile hamburger menu functional, including open/close state, keyboard support, focus handling and navigation links.
-- [ ] Enable a permanent HTTP-to-HTTPS redirect. `http://nexa-model.com/` currently returns `200 OK` instead of redirecting to HTTPS.
-- [ ] Choose one canonical hostname and redirect the other with `301`/`308` (`www.nexa-model.com` and `nexa-model.com` currently both return the site). Add a canonical URL to the page metadata.
+- [x] Enable a permanent HTTP-to-HTTPS redirect using **SSL/TLS → Edge Certificates → Always Use HTTPS**. Verified in production on 8 August 2026: HTTP returns `301`, paths and query strings are preserved, and HTTPS completes with a valid certificate and no redirect loop.
+- [x] Use `nexa-model.com` as the canonical hostname and redirect `www.nexa-model.com` with a method-preserving `308`. Verified in production on 8 August 2026: root, paths, query strings and POST requests redirect correctly without loops.
 - [ ] Correct the application promise on the homepage. It says “up to 5 recent photos,” while the form requires at least 19 and permits up to 26. Confirm the intended requirements, then align the form, API limits and homepage time estimate.
 - [ ] Prevent expired pending applications from being replaced using only a known email address and Turnstile. Require the existing upload token or an emailed, single-use recovery token before replacing answers or deleting uploaded photos.
 - [ ] Stop applicant-status/email enumeration. Return a uniform public response instead of revealing whether an email is new, has an active upload session or has already submitted.
