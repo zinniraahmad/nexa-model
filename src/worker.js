@@ -159,7 +159,9 @@ async function requireUploadAccess(request, env, applicationId, includeFinalized
   if (!token || token.length > 200) return null
   const tokenHash = await sha256(token)
   return env.DB.prepare(`
-    SELECT a.application_id, a.full_name, a.email, d.application_status, d.confirmation_sent_at
+    SELECT a.application_id, a.full_name, a.email, a.current_location,
+           d.responses_json, d.application_status, d.submitted_at,
+           d.confirmation_sent_at, d.admin_notification_sent_at
     FROM applicants a
     JOIN applicant_details d ON d.application_id = a.application_id
     WHERE a.application_id = ?
@@ -177,7 +179,7 @@ async function sendSubmissionReceiptEmail(env, applicant) {
   if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false
   const replyTo = env.EMAIL_REPLY_TO || 'itszinniraahmad@gmail.com'
   const subject = `Nexa Model application submitted — ${applicant.application_id}`
-  const text = `Hi ${applicant.full_name},\n\nYour Nexa Model application and photographs were submitted successfully. Your reference is ${applicant.application_id}. Submission does not guarantee shortlisting, training completion or an assignment. If shortlisted, Nexa Model will contact you through WhatsApp.\n\nPermohonan dan gambar Nexa Model anda telah berjaya dihantar. Rujukan anda ialah ${applicant.application_id}. Penghantaran tidak menjamin pemilihan, tamat latihan atau tugasan. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.\n\nPrivacy enquiries / Pertanyaan privasi: ${replyTo}`
+  const text = `Hi ${applicant.full_name},\n\nYour Nexa Model application and photos were submitted successfully. Your reference is ${applicant.application_id}. Submission does not guarantee shortlisting or training completion. If shortlisted, Nexa Model will contact you through WhatsApp.\n\nPermohonan dan gambar anda telah berjaya dihantar kepada Nexa Model. Rujukan anda ialah ${applicant.application_id}. Permohonan ini tidak menjamin pemilihan atau tamat latihan. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.\n\nPrivacy enquiries / Pertanyaan privasi: ${replyTo}`
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -191,7 +193,49 @@ async function sendSubmissionReceiptEmail(env, applicant) {
       reply_to: replyTo,
       subject,
       text,
-      html: `<p>Hi ${escapeHtml(applicant.full_name)},</p><p>Your Nexa Model application and photographs were <strong>submitted successfully</strong>.</p><p><strong>Reference: ${escapeHtml(applicant.application_id)}</strong></p><p>Submission does not guarantee shortlisting, training completion or an assignment. If shortlisted, Nexa Model will contact you through WhatsApp.</p><hr><p>Permohonan dan gambar Nexa Model anda telah <strong>berjaya dihantar</strong>.</p><p><strong>Rujukan: ${escapeHtml(applicant.application_id)}</strong></p><p>Penghantaran tidak menjamin pemilihan, tamat latihan atau tugasan. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
+      html: `<p>Hi ${escapeHtml(applicant.full_name)},</p><p>Your Nexa Model application and photos were <strong>submitted successfully</strong>.</p><p><strong>Reference: ${escapeHtml(applicant.application_id)}</strong></p><p>Submission does not guarantee shortlisting, training completion or an assignment. If shortlisted, Nexa Model will contact you through WhatsApp.</p><hr><p>Permohonan dan gambar Nexa Model anda telah <strong>berjaya dihantar</strong>.</p><p><strong>Rujukan: ${escapeHtml(applicant.application_id)}</strong></p><p>Penghantaran tidak menjamin pemilihan, tamat latihan atau tugasan. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
+    }),
+  })
+  return response.ok
+}
+
+function singleLineEmailValue(value, maxLength = 120) {
+  return String(value ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, maxLength)
+}
+
+async function sendAdminSubmissionNotification(env, applicant) {
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false
+  const adminEmail = env.ADMIN_NOTIFICATION_EMAIL || 'itszinniraahmad@gmail.com'
+  const adminPortalUrl = env.ADMIN_PORTAL_URL || 'https://onlyadmin.nexa-model.com'
+  let responses = {}
+  try {
+    const parsed = JSON.parse(applicant.responses_json || '{}')
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) responses = parsed
+  } catch {
+    // The stored application remains reviewable in the admin portal.
+  }
+  const fullName = singleLineEmailValue(applicant.full_name)
+  const preferredName = singleLineEmailValue(responses.preferred_name) || fullName
+  const age = singleLineEmailValue(responses.age, 8) || 'Not provided'
+  const location = singleLineEmailValue(applicant.current_location || responses.current_location) || 'Not provided'
+  const submittedAt = singleLineEmailValue(applicant.submitted_at) || 'Just now'
+  const applicationId = singleLineEmailValue(applicant.application_id)
+  const subject = `New Nexa Model application — ${preferredName} (${applicationId})`
+  const text = `Hi Admin,\n\nA new application has been submitted to Nexa Model.\n\nApplication details:\n\nFull Name: ${fullName}\nPreferred Name: ${preferredName}\nAge: ${age}\nCurrent Location: ${location}\nApplication ID: ${applicationId}\nSubmitted At: ${submittedAt} UTC\n\nReview the application securely:\n${adminPortalUrl}\n\nPlease do not forward this email or applicant information.`
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': `admin-application-submitted/${applicationId}`,
+    },
+    body: JSON.stringify({
+      from: env.EMAIL_FROM,
+      to: [adminEmail],
+      reply_to: adminEmail,
+      subject,
+      text,
+      html: `<p>Hi Admin,</p><p>A new application has been submitted to Nexa Model.</p><h3>Application details</h3><p><strong>Full Name:</strong> ${escapeHtml(fullName)}<br><strong>Preferred Name:</strong> ${escapeHtml(preferredName)}<br><strong>Age:</strong> ${escapeHtml(age)}<br><strong>Current Location:</strong> ${escapeHtml(location)}<br><strong>Application ID:</strong> ${escapeHtml(applicationId)}<br><strong>Submitted At:</strong> ${escapeHtml(submittedAt)} UTC</p><p><a href="${escapeHtml(adminPortalUrl)}">Review the application securely</a></p><p><small>Please do not forward this email or applicant information.</small></p>`,
     }),
   })
   return response.ok
@@ -352,6 +396,9 @@ async function handleApply(request, env) {
     const answers = body?.answers
     const validationError = validateAnswers(answers)
     if (validationError) return json({ success: false, error: validationError }, { status: 400 })
+    if (!await verifyTurnstile(request, env, body?.turnstile_token)) {
+      return json({ success: false, error: 'Final security verification failed. Please complete it again.' }, { status: 400 })
+    }
     const responsesJson = JSON.stringify(answers)
     if (new TextEncoder().encode(responsesJson).length > MAX_JSON_BYTES) return json({ success: false, error: 'Application is too large.' }, { status: 400 })
 
@@ -473,6 +520,7 @@ async function handleFinalize(request, env) {
             confirmation_token_hash = NULL, confirmation_token_expires_at = NULL
         WHERE application_id = ? AND application_status = 'pending_upload'
       `).bind(applicationId).run()
+      applicant.submitted_at = new Date().toISOString()
       console.log('application.submitted', { applicationId })
     } else if (applicant.application_status === 'pending_email') {
       await env.DB.prepare(`
@@ -493,10 +541,20 @@ async function handleFinalize(request, env) {
         console.error('Submission receipt email failed', error)
       }
     }
+    let adminNotificationSent = Boolean(applicant.admin_notification_sent_at)
+    if (!adminNotificationSent) {
+      try {
+        adminNotificationSent = await sendAdminSubmissionNotification(env, applicant)
+        if (adminNotificationSent) await env.DB.prepare('UPDATE applicant_details SET admin_notification_sent_at = CURRENT_TIMESTAMP WHERE application_id = ?').bind(applicationId).run()
+        else console.warn('application.admin_notification_not_sent', { applicationId })
+      } catch (error) {
+        console.error('Admin submission notification failed', error)
+      }
+    }
     if (!emailSent) {
       return json({ success: false, error: 'Your application was submitted, but the receipt email could not be sent. Please retry.' }, { status: 502 })
     }
-    return json({ success: true, application_id: applicationId, email_sent: true, submitted: true })
+    return json({ success: true, application_id: applicationId, email_sent: true, admin_notification_sent: adminNotificationSent, submitted: true })
   } catch (error) {
     console.error('Application finalization failed', error)
     return json({ success: false, error: 'Unable to finalize application.' }, { status: 500 })

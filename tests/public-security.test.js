@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { applicationSections, declarationFields, photoFields } from '../src/applicationForm.js'
-import { detectImageMime, handleApplicationAccess, handleFinalize, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
+import { detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
 import { API_SECURITY_HEADERS, apiJson } from '../src/apiResponse.js'
 import { requireAdmin } from '../admin/access.js'
 
@@ -124,24 +124,40 @@ test('checks existing email after Turnstile and sends no pre-application email',
   assert.equal(outboundUrls.some((url) => url.includes('resend.com')), false)
 })
 
-test('submits immediately and sends exactly one receipt email', async (context) => {
-  const state = { status: 'pending_upload', confirmationSentAt: null, resendCalls: 0 }
+test('requires a separate final Turnstile token before creating an application', async () => {
+  const request = new Request('https://nexa-model.com/api/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer browser-access-token' },
+    body: JSON.stringify({ answers: validAnswers() }),
+  })
+  const response = await handleApply(request, {
+    TURNSTILE_SECRET_KEY: 'test-secret',
+    DB: { prepare() { throw new Error('D1 must not be reached before final Turnstile verification.') } },
+  })
+  assert.equal(response.status, 400)
+  assert.match((await response.json()).error, /Final security verification failed/i)
+})
+
+test('submits immediately and sends one candidate receipt plus one admin notification', async (context) => {
+  const state = { status: 'pending_upload', confirmationSentAt: null, adminNotificationSentAt: null, resendCalls: 0 }
   const uploadedRows = photoFields.flatMap((field) => Array.from({ length: field.min }, (_, index) => ({ photo_type: `${field.key}_${index + 1}`, count: 1 })))
   const env = {
     RESEND_API_KEY: 'test-resend', EMAIL_FROM: 'Nexa Model <applications@nexa-model.com>', PUBLIC_SITE_URL: 'https://nexa-model.com',
+    ADMIN_NOTIFICATION_EMAIL: 'admin@example.com', ADMIN_PORTAL_URL: 'https://onlyadmin.nexa-model.com',
     DB: {
       prepare(sql) {
         return {
           bind() {
             return {
               async first() {
-                if (sql.includes('SELECT a.application_id')) return { application_id: 'application-1', full_name: 'Candidate', email: 'candidate@example.com', application_status: state.status, confirmation_sent_at: state.confirmationSentAt }
+                if (sql.includes('SELECT a.application_id')) return { application_id: 'application-1', full_name: 'Candidate Full Name', email: 'candidate@example.com', current_location: 'Shah Alam, Selangor', responses_json: JSON.stringify({ preferred_name: 'Nexa', age: 24 }), submitted_at: '2026-08-08 00:00:00', application_status: state.status, confirmation_sent_at: state.confirmationSentAt, admin_notification_sent_at: state.adminNotificationSentAt }
                 return null
               },
               async all() { return { results: uploadedRows } },
               async run() {
                 if (sql.includes("application_status = 'submitted'")) state.status = 'submitted'
                 if (sql.includes('confirmation_sent_at = CURRENT_TIMESTAMP')) state.confirmationSentAt = '2026-08-08 00:00:00'
+                if (sql.includes('admin_notification_sent_at = CURRENT_TIMESTAMP')) state.adminNotificationSentAt = '2026-08-08 00:00:00'
                 return { meta: { changes: 1 } }
               },
             }
@@ -152,10 +168,19 @@ test('submits immediately and sends exactly one receipt email', async (context) 
   }
   context.mock.method(globalThis, 'fetch', async (url, init) => {
     assert.equal(String(url), 'https://api.resend.com/emails')
-    assert.equal(init.headers['Idempotency-Key'], 'application-submitted/application-1')
     const payload = JSON.parse(init.body)
-    assert.match(payload.html, /submitted successfully/)
-    assert.doesNotMatch(payload.html, /\/apply\?confirm=/)
+    if (payload.to[0] === 'candidate@example.com') {
+      assert.equal(init.headers['Idempotency-Key'], 'application-submitted/application-1')
+      assert.match(payload.html, /submitted successfully/)
+      assert.doesNotMatch(payload.html, /\/apply\?confirm=/)
+    } else {
+      assert.equal(payload.to[0], 'admin@example.com')
+      assert.equal(init.headers['Idempotency-Key'], 'admin-application-submitted/application-1')
+      assert.match(payload.subject, /Nexa \(application-1\)/)
+      assert.match(payload.html, /Candidate Full Name/)
+      assert.match(payload.html, /Shah Alam, Selangor/)
+      assert.match(payload.html, /onlyadmin\.nexa-model\.com/)
+    }
     state.resendCalls += 1
     return new Response('', { status: 200 })
   })
@@ -165,10 +190,10 @@ test('submits immediately and sends exactly one receipt email', async (context) 
   const first = await handleFinalize(request(), env)
   assert.equal(first.status, 200)
   assert.equal(state.status, 'submitted')
-  assert.equal(state.resendCalls, 1)
+  assert.equal(state.resendCalls, 2)
   const second = await handleFinalize(request(), env)
   assert.equal(second.status, 200)
-  assert.equal(state.resendCalls, 1)
+  assert.equal(state.resendCalls, 2)
 })
 
 test('rejects oversized bodies before JSON and multipart parsing', async () => {

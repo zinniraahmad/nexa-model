@@ -180,7 +180,7 @@ function CustomSelect({ field, value, onChange, fieldId }) {
 
 function SectionExtras({ sectionId }) {
   if (sectionId === 'poses') return <div className="reference-block"><h3>Posing references <em>Rujukan pose</em></h3><div className="reference-gallery">{poseReferences.map(([category, title, image]) => <figure key={category}><figcaption><b>Category {category} - {title}</b></figcaption><img src={image} alt={`Category ${category}: ${title}`} /></figure>)}</div></div>
-  if (sectionId === 'rates') return <div className="section-rate-list"><div><span>Free Hair <em>Tidak bertudung</em></span><strong>RM160–RM180 <small>/ hour · jam</small></strong></div><div><span>Free Hair OR Hijab <em>Tidak bertudung ATAU bertudung</em></span><strong>RM180–RM200 <small>/ hour · jam</small></strong></div><div><span>Both Free Hair AND Hijab <em>Tidak bertudung DAN bertudung</em></span><strong>RM380–RM400 <small>/ hour · jam</small></strong></div><p>Final rates and assignment details will be confirmed before you accept a project.<em>Kadar akhir dan maklumat tugasan akan disahkan sebelum anda menerima projek.</em></p></div>
+  if (sectionId === 'rates') return <div className="section-rate-list"><div><span>Hijab <em>Bertudung</em></span><strong>RM160–RM180 <small>/ hour · jam</small></strong></div><div><span>Free Hair<em>Tidak bertudung</em></span><strong>RM180–RM200 <small>/ hour · jam</small></strong></div><div><span>Both Free Hair AND Hijab <em>Tidak bertudung DAN bertudung</em></span><strong>RM380–RM400 <small>/ hour · jam</small></strong></div><p>Final rates and assignment details will be confirmed before you accept a project.<em>Kadar akhir dan maklumat tugasan akan disahkan sebelum anda menerima projek.</em></p></div>
   if (sectionId === 'training') return <div className="reference-block"><h3>Training reference <em>Rujukan latihan</em></h3><figure className="training-reference"><img src={trainingImage} alt="Nexa Model training reference" /></figure></div>
   return null
 }
@@ -235,6 +235,8 @@ export default function TalentApplication() {
   const [alreadySubmitted, setAlreadySubmitted] = useState(false)
   const [turnstileToken, setTurnstileToken] = useState('')
   const [turnstileResetKey, setTurnstileResetKey] = useState(0)
+  const [submitTurnstileToken, setSubmitTurnstileToken] = useState('')
+  const [submitTurnstileResetKey, setSubmitTurnstileResetKey] = useState(0)
   const [uploadToken, setUploadToken] = useState('')
   const [emailAccessToken, setEmailAccessToken] = useState('')
 
@@ -356,6 +358,10 @@ export default function TalentApplication() {
       setMessage('Complete the security verification before submitting.')
       return
     }
+    if (!applicationId && !submitTurnstileToken) {
+      setMessage('Please complete the final security verification before submitting your application.')
+      return
+    }
     setSubmitting(true)
     setMessage('Saving your application...')
     try {
@@ -370,7 +376,7 @@ export default function TalentApplication() {
           method: 'POST', headers,
           body: JSON.stringify({
             full_name: answers.full_name, email: answers.email, phone: answers.phone,
-            current_location: answers.current_location, answers,
+            current_location: answers.current_location, answers, turnstile_token: submitTurnstileToken,
           }),
         })
         const data = await response.json().catch(() => ({}))
@@ -393,6 +399,7 @@ export default function TalentApplication() {
         }
         id = data.application_id
         token = data.upload_token
+        setSubmitTurnstileToken('')
         setApplicationId(id)
         setUploadToken(token)
         writePendingUploadSession(normalizedEmail, id, token)
@@ -428,6 +435,8 @@ export default function TalentApplication() {
       setUploadProgress((current) => Object.fromEntries(Object.entries(current).map(([key, item]) => [key, item.status === 'uploading' ? { ...item, status: 'failed' } : item])))
       setMessage(error.message || 'Submission failed. Please try again.')
       if (!applicationId) {
+        setSubmitTurnstileToken('')
+        setSubmitTurnstileResetKey((current) => current + 1)
         setTurnstileToken('')
         setTurnstileResetKey((current) => current + 1)
       }
@@ -449,7 +458,7 @@ export default function TalentApplication() {
 
       {step === photoStep && <section className="photo-step expanded-form"><header className="form-section-heading"><p className="section-label">SECTION 10</p><h2>Photo Submission</h2><em className="section-title-bm">Penghantaran Gambar</em><p>Select one or multiple recent, clear and unfiltered PNG, JPG or JPEG images. Maximum 10 MB each.</p><p className="bm-text">Pilih satu atau beberapa gambar PNG, JPG atau JPEG yang terkini, jelas dan tanpa filter. Maksimum 10 MB setiap gambar.</p></header><div className="photo-field-list">{photoFields.map((field) => <label className="upload-zone compact-upload" key={field.key}><ImagePlus size={25} /><strong>{field.label}{field.required && <b className="required-mark"> *</b>}</strong><em className="bm-text">{field.labelBm}</em><span>{photos[field.key]?.length ? `${photos[field.key].length} selected — click to replace` : field.min === field.max ? `${field.min} file(s)` : `${field.min}–${field.max} file(s)`}</span>{photos[field.key]?.length > 0 && <div className="photo-preview-grid">{photos[field.key].map((file) => <FileThumbnail key={`${file.name}-${file.lastModified}`} file={file} />)}</div>}<input type="file" accept=".png,.jpg,.jpeg" multiple={field.max > 1} onChange={(event) => selectPhotos(field, event)} /></label>)}</div><div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(step - 1)}>Back</button><button className="button button-dark" type="button" onClick={continueFromPhotos}>Continue <ArrowRight size={17} /></button></div></section>}
 
-      {step === declarationStep && <form className="application-form expanded-form" onSubmit={submitApplication}><header className="form-section-heading"><p className="section-label">SECTION 11</p><h2>Final Declaration</h2><em className="section-title-bm">Pengisytiharan Akhir</em><p>Review your information carefully before submitting.</p><p className="bm-text">Semak maklumat anda dengan teliti sebelum menghantar.</p><p className="privacy-form-link">Please review the <Link to="/privacy" target="_blank" rel="noreferrer">Privacy Notice / Notis Privasi</Link> before confirming.</p></header><div className="form-fields">{declarationFields.map((field) => <Field key={field.key} field={field} value={answers[field.key]} onChange={(value) => setAnswer(field.key, value)} />)}</div>{Object.keys(uploadProgress).length > 0 && <div className="upload-progress-panel"><h3>Photo upload status <em>Status muat naik gambar</em></h3>{Object.entries(uploadProgress).map(([key, item]) => <div className={`upload-progress-row ${item.status}`} key={key}><div><span>{item.label}</span><b>{item.status === 'failed' ? 'Failed — retry submission' : `${item.uploaded}/${item.total} · ${item.status}`}</b></div><progress max={item.total} value={item.uploaded} /></div>)}</div>}<div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(photoStep)} disabled={submitting}>Back</button><button className="button button-dark" disabled={submitting}>{submitting ? <><LoaderCircle className="spin" size={17} /> Submitting</> : <>Submit application <ArrowRight size={17} /></>}</button></div></form>}
+      {step === declarationStep && <form className="application-form expanded-form" onSubmit={submitApplication}><header className="form-section-heading"><p className="section-label">SECTION 11</p><h2>Final Declaration</h2><em className="section-title-bm">Pengisytiharan Akhir</em><p>Review your information carefully before submitting.</p><p className="bm-text">Semak maklumat anda dengan teliti sebelum menghantar.</p><p className="privacy-form-link">Please review the <Link to="/privacy" target="_blank" rel="noreferrer">Privacy Notice / Notis Privasi</Link> before confirming.</p></header><div className="form-fields">{declarationFields.map((field) => <Field key={field.key} field={field} value={answers[field.key]} onChange={(value) => setAnswer(field.key, value)} />)}</div>{!applicationId && <div className="final-security-check"><h3>Final security verification <em>Pengesahan keselamatan akhir</em></h3><p>Complete this check before submitting your application.</p><p className="bm-text">Lengkapkan semakan ini sebelum menghantar permohonan anda.</p><TurnstileWidget onToken={setSubmitTurnstileToken} resetKey={submitTurnstileResetKey} /></div>}{Object.keys(uploadProgress).length > 0 && <div className="upload-progress-panel"><h3>Photo upload status <em>Status muat naik gambar</em></h3>{Object.entries(uploadProgress).map(([key, item]) => <div className={`upload-progress-row ${item.status}`} key={key}><div><span>{item.label}</span><b>{item.status === 'failed' ? 'Failed — retry submission' : `${item.uploaded}/${item.total} · ${item.status}`}</b></div><progress max={item.total} value={item.uploaded} /></div>)}</div>}<div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(photoStep)} disabled={submitting}>Back</button><button className="button button-dark" disabled={submitting}>{submitting ? <><LoaderCircle className="spin" size={17} /> Submitting</> : <>Submit application <ArrowRight size={17} /></>}</button></div></form>}
 
       {step === successStep && <section className="success-step"><div className="success-icon"><Check size={28} /></div><p className="section-label">APPLICATION SUBMITTED</p><h2>Your application was submitted successfully.</h2><p>A receipt has been sent to your email. Nexa Model will contact you through WhatsApp if you are shortlisted.</p><p className="bm-text">Permohonan anda telah berjaya dihantar. Resit telah dihantar ke e-mel anda. Nexa Model akan menghubungi anda melalui WhatsApp sekiranya anda disenarai pendek.</p><p className="reference-label">Your application reference <em>Rujukan permohonan anda</em></p><code>{applicationId}</code><small className="reference-help">Keep this reference for future communication with Nexa Model.<em>Simpan rujukan ini untuk urusan dengan Nexa Model pada masa hadapan.</em></small><Link className="button button-dark" to="/">Return home</Link></section>}
       </>}

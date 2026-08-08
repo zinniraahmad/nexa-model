@@ -54,7 +54,7 @@ export const applicationSections = [
     ],
   },
   {
-    id: 'rates', eyebrow: 'SECTION 5', title: 'Rates & Assignment Information', titleBm: 'Kadar & Maklumat Tugasan',
+    id: 'rates', eyebrow: 'SECTION 5', title: 'Rates & Modelling Opportunities', titleBm: 'Kadar & Peluang Modelling',
     description: 'Estimated rates are shown on the introduction page. Final rates depend on campaign requirements, duration, usage and client arrangements.', descriptionBm: 'Anggaran kadar dipaparkan pada halaman pengenalan. Kadar akhir bergantung pada kempen, tempoh, penggunaan dan aturan client.',
     fields: [{ key: 'rates_acknowledged', type: 'checkbox', label: 'I have reviewed and understood the estimated modelling rates.', labelBm: 'Saya telah menyemak dan memahami anggaran kadar modelling.', options: ['I understand.'], required: true }],
   },

@@ -57,7 +57,7 @@ export function Introduction({ accepted, setAccepted, onContinue }) {
       <div className="information-section rates-section">
         <p className="section-label">MODELLING RATES · KADAR MODELLING</p>
         <h3>Expected rates for suitable paid modelling opportunities</h3>
-        <div className="rate-list"><div><span>Free Hair <small className="bm-text">Tidak bertudung</small></span><strong>RM160–RM180 <small>/ hour · <i className="bm-text">jam</i></small></strong></div><div><span>Hijab <small className="bm-text">Bertudung</small></span><strong>RM180–RM200 <small>/ hour · <i className="bm-text">jam</i></small></strong></div><div><span>Both Free Hair AND Hijab <small className="bm-text">Bertudung dan tidak bertudung</small></span><strong>RM380–RM400 <small>/ hour · <i className="bm-text">jam</i></small></strong></div></div>
+        <div className="rate-list"><div><span>Hijab <small className="bm-text">Bertudung</small></span><strong>RM160–RM180 <small>/ hour · <i className="bm-text">jam</i></small></strong></div><div><span>Free Hair <small className="bm-text">Tidak Bertudung</small></span><strong>RM180–RM200 <small>/ hour · <i className="bm-text">jam</i></small></strong></div><div><span>Both Free Hair AND Hijab <small className="bm-text">Bertudung dan tidak bertudung</small></span><strong>RM380–RM400 <small>/ hour · <i className="bm-text">jam</i></small></strong></div></div>
         <p>*Final rates and project requirements will be discussed upon acceptance.<span className="bm-text">*Kadar akhir serta keperluan projek akan dimaklumkan sebelum calon menerima peluang modelling.</span></p>
       </div>
 

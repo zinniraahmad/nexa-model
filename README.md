@@ -113,6 +113,7 @@ npx wrangler d1 execute nexa-production --remote --file migrations/0005_applicat
 npx wrangler d1 execute nexa-production --remote --file migrations/0006_application_access.sql
 npx wrangler d1 execute nexa-production --remote --file migrations/0007_browser_intake_confirmation.sql
 npx wrangler d1 execute nexa-production --remote --file migrations/0008_restore_single_application_receipt.sql
+npx wrangler d1 execute nexa-production --remote --file migrations/0009_admin_submission_notification.sql
 ```
 
 Create a Cloudflare Turnstile widget in Managed mode for the production hostname, then configure
@@ -130,7 +131,9 @@ token and a one-hour application-scoped upload token, validates PNG/JPEG signatu
 every form field and photo slot server-side. The first section does not send email. After Turnstile,
 the backend checks whether the email already has an application: an existing email receives the
 already-submitted landing page, while a new email receives an opaque session token and may continue.
-The database enforces one application per case-insensitive email address. JSON and
+The Final Declaration renders a second, independent Turnstile challenge, and `/api/apply` verifies
+that second token before creating any D1 record. The database enforces one application per
+case-insensitive email address. JSON and
 multipart request bodies are size-limited while
 streaming and are rejected before JSON or form-data parsing when they exceed their route limit.
 New candidate photos are marked private in ImageKit. The admin Worker returns five-minute signed
@@ -157,7 +160,10 @@ The frontend calls `/api/finalize` after every applicant photo has uploaded. Fin
 record directly to `submitted` and sends one bilingual submission receipt without an action link. The
 send timestamp is recorded in D1 so a successful send is not intentionally repeated, and a stable
 Resend idempotency key prevents concurrent/retried finalization requests from creating duplicate email
-within Resend's idempotency window.
+within Resend's idempotency window. A separate idempotent notification is sent to
+`ADMIN_NOTIFICATION_EMAIL` with the applicant's name, preferred name, age, location, application ID,
+submission time and `ADMIN_PORTAL_URL`. It contains no photos; an admin-notification failure is logged
+but does not reverse or fail an otherwise successful candidate submission.
 
 Verify a sending domain in Resend, then configure the Worker:
 
