@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { applicationSections, declarationFields } from '../src/applicationForm.js'
-import { authorizePendingReplacement, detectImageMime, handleApplicationAccess, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
+import { applicationSections, declarationFields, photoFields } from '../src/applicationForm.js'
+import { detectImageMime, handleApplicationAccess, handleFinalize, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
 import { API_SECURITY_HEADERS, apiJson } from '../src/apiResponse.js'
 import { requireAdmin } from '../admin/access.js'
 
@@ -70,60 +70,6 @@ test('detects PNG and JPEG signatures instead of trusting filenames', async () =
   assert.equal(await detectImageMime(executable), null)
 })
 
-async function tokenHash(value) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
-}
-
-function replacementDatabase({ uploadToken, recoveryToken, recoveryActive = true }) {
-  const state = {
-    uploadHash: uploadToken ? null : undefined,
-    recoveryHash: recoveryToken ? null : undefined,
-    recoveryActive,
-  }
-  return Promise.all([
-    uploadToken ? tokenHash(uploadToken).then((hash) => { state.uploadHash = hash }) : null,
-    recoveryToken ? tokenHash(recoveryToken).then((hash) => { state.recoveryHash = hash }) : null,
-  ]).then(() => ({
-    prepare(sql) {
-      return {
-        bind(nextHash, _nextExpiry, _applicationId, presentedHash) {
-          return {
-            async run() {
-              if (sql.includes('recovery_token_hash = ?') && state.recoveryActive && state.recoveryHash === presentedHash) {
-                state.recoveryHash = null
-                state.uploadHash = nextHash
-                return { meta: { changes: 1 } }
-              }
-              if (sql.includes('AND upload_token_hash = ?') && state.uploadHash === presentedHash) {
-                state.uploadHash = nextHash
-                return { meta: { changes: 1 } }
-              }
-              return { meta: { changes: 0 } }
-            },
-          }
-        },
-      }
-    },
-  }))
-}
-
-test('requires a matching replacement credential and consumes it atomically', async () => {
-  const DB = await replacementDatabase({ uploadToken: 'existing-upload-token', recoveryToken: 'single-use-recovery' })
-  const env = { DB }
-  const request = (token) => new Request('https://nexa-model.com/api/apply', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-
-  assert.equal(await authorizePendingReplacement(request('wrong-token'), env, 'application-1', 'next-hash-1', '2099-01-01 00:00:00'), null)
-  assert.equal(await authorizePendingReplacement(request('single-use-recovery'), env, 'application-1', 'next-hash-2', '2099-01-01 00:00:00'), 'recovery_token')
-  assert.equal(await authorizePendingReplacement(request('single-use-recovery'), env, 'application-1', 'next-hash-3', '2099-01-01 00:00:00'), null)
-})
-
-test('accepts possession of the existing upload token even after its upload window', async () => {
-  const DB = await replacementDatabase({ uploadToken: 'expired-upload-token' })
-  const request = new Request('https://nexa-model.com/api/apply', { headers: { Authorization: 'Bearer expired-upload-token' } })
-  assert.equal(await authorizePendingReplacement(request, { DB }, 'application-2', 'rotated-hash', '2099-01-01 00:00:00'), 'upload_token')
-})
-
 function accessDatabase(existing) {
   return {
     prepare(sql) {
@@ -131,7 +77,7 @@ function accessDatabase(existing) {
         bind() {
           return {
             async first() {
-              return sql.includes('SELECT a.application_id') ? existing : null
+              return sql.includes('SELECT 1 AS present') ? existing : null
             },
             async run() {
               return { meta: { changes: 1 } }
@@ -143,16 +89,14 @@ function accessDatabase(existing) {
   }
 }
 
-test('returns the same public access response for new, pending and submitted emails', async (context) => {
+test('checks existing email after Turnstile and sends no pre-application email', async (context) => {
+  const outboundUrls = []
   context.mock.method(globalThis, 'fetch', async (url) => {
+    outboundUrls.push(String(url))
     if (String(url).includes('siteverify')) return Response.json({ success: true })
     return new Response('', { status: 200 })
   })
-  const states = [
-    null,
-    { application_id: 'pending-id', full_name: 'Pending Applicant', email: 'candidate@example.com', application_status: 'pending_upload' },
-    { application_id: 'submitted-id', full_name: 'Submitted Applicant', email: 'candidate@example.com', application_status: 'submitted' },
-  ]
+  const states = [null, { present: 1 }]
   const responses = []
   for (const existing of states) {
     const request = new Request('https://nexa-model.com/api/application-access', {
@@ -169,9 +113,62 @@ test('returns the same public access response for new, pending and submitted ema
     })
     responses.push({ status: response.status, body: await response.json() })
   }
-  assert.deepEqual(responses[1], responses[0])
-  assert.deepEqual(responses[2], responses[0])
-  assert.equal(responses[0].status, 202)
+  assert.equal(responses[0].status, 200)
+  assert.equal(responses[0].body.already_submitted, false)
+  assert.match(responses[0].body.application_access_token, /^[A-Za-z0-9_-]{40,}$/)
+  assert.match(responses[0].body.expires_at, /Z$/)
+  assert.equal(responses[1].status, 200)
+  assert.equal(responses[1].body.already_submitted, true)
+  assert.equal(responses[1].body.application_access_token, undefined)
+  assert.equal(outboundUrls.filter((url) => url.includes('siteverify')).length, 2)
+  assert.equal(outboundUrls.some((url) => url.includes('resend.com')), false)
+})
+
+test('submits immediately and sends exactly one receipt email', async (context) => {
+  const state = { status: 'pending_upload', confirmationSentAt: null, resendCalls: 0 }
+  const uploadedRows = photoFields.flatMap((field) => Array.from({ length: field.min }, (_, index) => ({ photo_type: `${field.key}_${index + 1}`, count: 1 })))
+  const env = {
+    RESEND_API_KEY: 'test-resend', EMAIL_FROM: 'Nexa Model <applications@nexa-model.com>', PUBLIC_SITE_URL: 'https://nexa-model.com',
+    DB: {
+      prepare(sql) {
+        return {
+          bind() {
+            return {
+              async first() {
+                if (sql.includes('SELECT a.application_id')) return { application_id: 'application-1', full_name: 'Candidate', email: 'candidate@example.com', application_status: state.status, confirmation_sent_at: state.confirmationSentAt }
+                return null
+              },
+              async all() { return { results: uploadedRows } },
+              async run() {
+                if (sql.includes("application_status = 'submitted'")) state.status = 'submitted'
+                if (sql.includes('confirmation_sent_at = CURRENT_TIMESTAMP')) state.confirmationSentAt = '2026-08-08 00:00:00'
+                return { meta: { changes: 1 } }
+              },
+            }
+          },
+        }
+      },
+    },
+  }
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(String(url), 'https://api.resend.com/emails')
+    assert.equal(init.headers['Idempotency-Key'], 'application-submitted/application-1')
+    const payload = JSON.parse(init.body)
+    assert.match(payload.html, /submitted successfully/)
+    assert.doesNotMatch(payload.html, /\/apply\?confirm=/)
+    state.resendCalls += 1
+    return new Response('', { status: 200 })
+  })
+  const request = () => new Request('https://nexa-model.com/api/finalize', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer upload-token' }, body: JSON.stringify({ application_id: 'application-1' }),
+  })
+  const first = await handleFinalize(request(), env)
+  assert.equal(first.status, 200)
+  assert.equal(state.status, 'submitted')
+  assert.equal(state.resendCalls, 1)
+  const second = await handleFinalize(request(), env)
+  assert.equal(second.status, 200)
+  assert.equal(state.resendCalls, 1)
 })
 
 test('rejects oversized bodies before JSON and multipart parsing', async () => {
@@ -227,16 +224,17 @@ test('serves only declared SPA routes and returns a real 404 for unknown paths',
       async fetch(request) {
         const pathname = new URL(request.url).pathname
         requestedPaths.push(pathname)
-        if (pathname === '/index.html') return new Response('<div id="root"></div>', { status: 200 })
+        if (pathname === '/') return new Response('<div id="root"></div>', { status: 200 })
         if (pathname === '/favicon.svg') return new Response('<svg/>', { status: 200 })
         return new Response('missing', { status: 404 })
       },
     },
   }
 
-  const known = await handleStaticRequest(new Request('https://nexa-model.com/apply'), env, new URL('https://nexa-model.com/apply'))
+  const knownUrl = new URL('https://nexa-model.com/apply?confirm=single-use-token')
+  const known = await handleStaticRequest(new Request(knownUrl), env, knownUrl)
   assert.equal(known.status, 200)
-  assert.deepEqual(requestedPaths, ['/apply', '/index.html'])
+  assert.deepEqual(requestedPaths, ['/'])
 
   const unknown = await handleStaticRequest(new Request('https://nexa-model.com/not-a-page'), env, new URL('https://nexa-model.com/not-a-page'))
   assert.equal(unknown.status, 404)

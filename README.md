@@ -111,6 +111,8 @@ npx wrangler d1 execute nexa-production --remote --file migrations/0003_public_s
 npx wrangler d1 execute nexa-production --remote --file migrations/0004_confirmation_email.sql
 npx wrangler d1 execute nexa-production --remote --file migrations/0005_application_recovery.sql
 npx wrangler d1 execute nexa-production --remote --file migrations/0006_application_access.sql
+npx wrangler d1 execute nexa-production --remote --file migrations/0007_browser_intake_confirmation.sql
+npx wrangler d1 execute nexa-production --remote --file migrations/0008_restore_single_application_receipt.sql
 ```
 
 Create a Cloudflare Turnstile widget in Managed mode for the production hostname, then configure
@@ -123,14 +125,13 @@ npx wrangler secret put TURNSTILE_SECRET_KEY
 ```
 
 For local development, add the same names to `.dev.vars`. The Worker verifies every application
-with Turnstile, applies Cloudflare rate-limit bindings, issues a one-hour application-scoped upload
-token, validates PNG/JPEG signatures, enforces every form field and photo slot server-side, and only
-changes an application from `pending_upload` to `submitted` after all required photos are present.
-Replacing an unfinished application requires its existing upload token or a 60-minute, single-use
-recovery token delivered to the applicant's email address.
-Before the form proceeds beyond its first section, the applicant requests a secure email link. The
-public response is identical for new, unfinished and submitted email addresses; only the mailbox
-owner receives the applicable instruction. JSON and multipart request bodies are size-limited while
+with Turnstile, applies Cloudflare rate-limit bindings, issues a two-hour single-use browser intake
+token and a one-hour application-scoped upload token, validates PNG/JPEG signatures, and enforces
+every form field and photo slot server-side. The first section does not send email. After Turnstile,
+the backend checks whether the email already has an application: an existing email receives the
+already-submitted landing page, while a new email receives an opaque session token and may continue.
+The database enforces one application per case-insensitive email address. JSON and
+multipart request bodies are size-limited while
 streaming and are rejected before JSON or form-data parsing when they exceed their route limit.
 New candidate photos are marked private in ImageKit. The admin Worker returns five-minute signed
 URLs and therefore needs its own copy of the ImageKit private key:
@@ -150,11 +151,13 @@ candidate records for up to six months. The admin review list starts showing a r
 30 days before the review date; deletion remains a deliberate staff action and removes both the D1
 record and its ImageKit files.
 
-## Application confirmation email
+## Application receipt email
 
-The frontend calls `/api/finalize` after every applicant photo has uploaded. Finalization is
-idempotent: retrying it does not create another application, and the confirmation email is recorded
-in D1 so it is not intentionally sent twice.
+The frontend calls `/api/finalize` after every applicant photo has uploaded. Finalization moves the
+record directly to `submitted` and sends one bilingual submission receipt without an action link. The
+send timestamp is recorded in D1 so a successful send is not intentionally repeated, and a stable
+Resend idempotency key prevents concurrent/retried finalization requests from creating duplicate email
+within Resend's idempotency window.
 
 Verify a sending domain in Resend, then configure the Worker:
 

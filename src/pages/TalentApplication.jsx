@@ -16,8 +16,6 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024
 const ACCEPTED_EXTENSIONS = ['.png', '.jpg', '.jpeg']
 const VALID_EMAIL = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
 const PENDING_SESSION_KEY = 'nexa_pending_upload_session'
-const RECOVERY_SESSION_KEY = 'nexa_application_recovery_token'
-const ACCESS_SESSION_KEY = 'nexa_application_access_token'
 
 function readPendingUploadSession() {
   if (typeof window === 'undefined') return null
@@ -46,51 +44,6 @@ function clearPendingUploadSession() {
   }
 }
 
-function recoveryTokenFromUrl() {
-  if (typeof window === 'undefined') return ''
-  try {
-    const urlToken = new URL(window.location.href).searchParams.get('recovery') || ''
-    if (urlToken && urlToken.length <= 200) {
-      window.sessionStorage.setItem(RECOVERY_SESSION_KEY, urlToken)
-      return urlToken
-    }
-    const sessionToken = window.sessionStorage.getItem(RECOVERY_SESSION_KEY) || ''
-    return sessionToken.length <= 200 ? sessionToken : ''
-  } catch {
-    return ''
-  }
-}
-
-function clearRecoveryToken() {
-  try {
-    window.sessionStorage.removeItem(RECOVERY_SESSION_KEY)
-  } catch {
-    // Nothing else is required when browser storage is unavailable.
-  }
-}
-
-function accessTokenFromUrl() {
-  if (typeof window === 'undefined') return ''
-  try {
-    const urlToken = new URL(window.location.href).searchParams.get('access') || ''
-    if (urlToken && urlToken.length <= 200) {
-      window.sessionStorage.setItem(ACCESS_SESSION_KEY, urlToken)
-      return urlToken
-    }
-    const sessionToken = window.sessionStorage.getItem(ACCESS_SESSION_KEY) || ''
-    return sessionToken.length <= 200 ? sessionToken : ''
-  } catch {
-    return ''
-  }
-}
-
-function clearAccessToken() {
-  try {
-    window.sessionStorage.removeItem(ACCESS_SESSION_KEY)
-  } catch {
-    // Nothing else is required when browser storage is unavailable.
-  }
-}
 const poseReferences = [
   ['A', 'Standing Pose', poseA], ['B', 'Side Angle Pose', poseB],
   ['C', 'Floor Pose', poseC], ['D', 'Movement Pose', poseD], ['E', 'Product-Focused Pose', poseE],
@@ -283,8 +236,7 @@ export default function TalentApplication() {
   const [turnstileToken, setTurnstileToken] = useState('')
   const [turnstileResetKey, setTurnstileResetKey] = useState(0)
   const [uploadToken, setUploadToken] = useState('')
-  const [recoveryToken, setRecoveryToken] = useState(recoveryTokenFromUrl)
-  const [emailAccessToken, setEmailAccessToken] = useState(accessTokenFromUrl)
+  const [emailAccessToken, setEmailAccessToken] = useState('')
 
   const photoStep = applicationSections.length + 1
   const declarationStep = photoStep + 1
@@ -301,14 +253,6 @@ export default function TalentApplication() {
     mobileImage.src = formMobileVisuals[nextIndex]
   }, [visualIndex])
 
-  useEffect(() => {
-    if (!recoveryToken && !emailAccessToken) return
-    const url = new URL(window.location.href)
-    url.searchParams.delete('recovery')
-    url.searchParams.delete('access')
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
-  }, [recoveryToken, emailAccessToken])
-
   function moveTo(nextStep) {
     setMessage('')
     setStep(nextStep)
@@ -316,23 +260,28 @@ export default function TalentApplication() {
   }
 
   function setAnswer(key, value) {
+    if (key === 'email' && String(value).trim().toLowerCase() !== String(answers.email || '').trim().toLowerCase() && (emailAccessToken || turnstileToken)) {
+      setEmailAccessToken('')
+      setTurnstileToken('')
+      setTurnstileResetKey((current) => current + 1)
+    }
     setAnswers((current) => ({ ...current, [key]: value }))
   }
 
   function applicationCredential() {
     const normalizedEmail = String(answers.email || '').trim().toLowerCase()
     const pendingSession = readPendingUploadSession()
-    return emailAccessToken || recoveryToken || (pendingSession?.email === normalizedEmail ? pendingSession.uploadToken : '')
+    return (pendingSession?.email === normalizedEmail ? pendingSession.uploadToken : '') || emailAccessToken
   }
 
   async function continueSection() {
     if (step === 1 && !VALID_EMAIL.test(String(answers.email || ''))) return setMessage('Please enter a complete email address with a valid domain, for example name@gmail.com or name@yahoo.com.')
     if (step === 1 && answers.age_gate !== 'Yes') return setMessage('This application is only available to candidates aged 18 to 30.')
     if (step === 1 && answers.voluntary_application !== 'Yes') return setMessage('You must be applying voluntarily to continue.')
-    if (step === 1 && !applicationCredential()) {
-      if (!turnstileToken) return setMessage('Please complete the security verification so we can email your secure application link.')
+    if (step === 1 && !emailAccessToken) {
+      if (!turnstileToken) return setMessage('Please complete the security verification to continue in this browser.')
       setSubmitting(true)
-      setMessage('Sending secure access instructions...')
+      setMessage('Starting a secure browser session...')
       try {
         const response = await fetch('/api/application-access', {
           method: 'POST',
@@ -340,10 +289,18 @@ export default function TalentApplication() {
           body: JSON.stringify({ email: answers.email, turnstile_token: turnstileToken }),
         })
         const data = await response.json().catch(() => ({}))
-        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to send secure access instructions.')
-        setMessage(data.message || 'Check your email and spam folder for secure access instructions.')
+        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to check the email address.')
+        if (data.already_submitted) {
+          setAlreadySubmitted(true)
+          setMessage('')
+          return
+        }
+        if (!data.application_access_token) throw new Error('Unable to start a secure browser session.')
+        setEmailAccessToken(data.application_access_token)
+        setMessage('')
+        moveTo(step + 1)
       } catch (error) {
-        setMessage(error.message || 'Unable to send secure access instructions.')
+        setMessage(error.message || 'Unable to start a secure browser session.')
       } finally {
         setTurnstileToken('')
         setTurnstileResetKey((current) => current + 1)
@@ -396,7 +353,7 @@ export default function TalentApplication() {
     if (!applicationId && !applicationCredential()) {
       setStep(1)
       window.scrollTo({ top: 0, behavior: 'smooth' })
-      setMessage('Request and open a secure application link before submitting.')
+      setMessage('Complete the security verification before submitting.')
       return
     }
     setSubmitting(true)
@@ -417,24 +374,21 @@ export default function TalentApplication() {
           }),
         })
         const data = await response.json().catch(() => ({}))
+        if (data.already_submitted) {
+          setAlreadySubmitted(true)
+          setMessage('')
+          return
+        }
         if (!response.ok || !data.success) {
           if (data.access_required) {
-            clearAccessToken()
-            clearRecoveryToken()
             clearPendingUploadSession()
             setEmailAccessToken('')
-            setRecoveryToken('')
             setStep(1)
             window.scrollTo({ top: 0, behavior: 'smooth' })
           }
           throw new Error(data.error || 'Unable to save application.')
         }
-        if (recoveryToken) {
-          clearRecoveryToken()
-          setRecoveryToken('')
-        }
         if (emailAccessToken) {
-          clearAccessToken()
           setEmailAccessToken('')
         }
         id = data.application_id
@@ -488,16 +442,16 @@ export default function TalentApplication() {
       <div className="application-progress"><span style={{ width: `${Math.min(((step + 1) / totalSteps) * 100, 100)}%` }} /></div>
       {step !== successStep && !alreadySubmitted && <div className="application-topline"><Link className="back-link" to="/"><ArrowLeft size={16} /> Back to home</Link><p className="section-label">APPLICATION · {String(step + 1).padStart(2, '0')} / {String(totalSteps).padStart(2, '0')}</p></div>}
 
-      {alreadySubmitted && <section className="success-step duplicate-application"><div className="success-icon"><Check size={28} /></div><p className="section-label">APPLICATION ALREADY RECEIVED</p><h2>Your application has been submitted.</h2><p>Thank you for your patience. Nexa Model will contact you through WhatsApp if you are shortlisted.</p><p className="bm-text">Permohonan anda telah dihantar. Terima kasih atas kesabaran anda. Nexa Model akan menghubungi anda melalui WhatsApp sekiranya anda disenarai pendek.</p><Link className="button button-dark" to="/">Return home</Link></section>}
+      {alreadySubmitted && <section className="success-step duplicate-application"><div className="success-icon"><Check size={28} /></div><p className="section-label">APPLICATION ALREADY RECEIVED</p><h2>You have already submitted an application. Thank you.</h2><p>Nexa Model will contact you through WhatsApp if you are shortlisted.</p><p className="bm-text">Anda telah menghantar permohonan. Terima kasih. Nexa Model akan menghubungi anda melalui WhatsApp sekiranya anda disenarai pendek.</p><Link className="button button-dark" to="/">Return home</Link></section>}
       {!alreadySubmitted && <>
       {!alreadySubmitted && step === 0 && <Introduction accepted={introductionAccepted} setAccepted={setIntroductionAccepted} onContinue={() => moveTo(1)} />}
-      {!alreadySubmitted && step >= 1 && step <= applicationSections.length && <FormSection section={applicationSections[step - 1]} answers={answers} setAnswer={setAnswer} onBack={() => moveTo(step - 1)} onNext={continueSection} submitting={step === 1 && submitting} nextLabel={step === 1 && !applicationCredential() ? 'Email secure link' : 'Continue'}>{step === 1 && !applicationCredential() && <TurnstileWidget onToken={setTurnstileToken} resetKey={turnstileResetKey} />}</FormSection>}
+      {!alreadySubmitted && step >= 1 && step <= applicationSections.length && <FormSection section={applicationSections[step - 1]} answers={answers} setAnswer={setAnswer} onBack={() => moveTo(step - 1)} onNext={continueSection} submitting={step === 1 && submitting} nextLabel="Continue">{step === 1 && !emailAccessToken && <TurnstileWidget onToken={setTurnstileToken} resetKey={turnstileResetKey} />}</FormSection>}
 
       {step === photoStep && <section className="photo-step expanded-form"><header className="form-section-heading"><p className="section-label">SECTION 10</p><h2>Photo Submission</h2><em className="section-title-bm">Penghantaran Gambar</em><p>Select one or multiple recent, clear and unfiltered PNG, JPG or JPEG images. Maximum 10 MB each.</p><p className="bm-text">Pilih satu atau beberapa gambar PNG, JPG atau JPEG yang terkini, jelas dan tanpa filter. Maksimum 10 MB setiap gambar.</p></header><div className="photo-field-list">{photoFields.map((field) => <label className="upload-zone compact-upload" key={field.key}><ImagePlus size={25} /><strong>{field.label}{field.required && <b className="required-mark"> *</b>}</strong><em className="bm-text">{field.labelBm}</em><span>{photos[field.key]?.length ? `${photos[field.key].length} selected — click to replace` : field.min === field.max ? `${field.min} file(s)` : `${field.min}–${field.max} file(s)`}</span>{photos[field.key]?.length > 0 && <div className="photo-preview-grid">{photos[field.key].map((file) => <FileThumbnail key={`${file.name}-${file.lastModified}`} file={file} />)}</div>}<input type="file" accept=".png,.jpg,.jpeg" multiple={field.max > 1} onChange={(event) => selectPhotos(field, event)} /></label>)}</div><div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(step - 1)}>Back</button><button className="button button-dark" type="button" onClick={continueFromPhotos}>Continue <ArrowRight size={17} /></button></div></section>}
 
       {step === declarationStep && <form className="application-form expanded-form" onSubmit={submitApplication}><header className="form-section-heading"><p className="section-label">SECTION 11</p><h2>Final Declaration</h2><em className="section-title-bm">Pengisytiharan Akhir</em><p>Review your information carefully before submitting.</p><p className="bm-text">Semak maklumat anda dengan teliti sebelum menghantar.</p><p className="privacy-form-link">Please review the <Link to="/privacy" target="_blank" rel="noreferrer">Privacy Notice / Notis Privasi</Link> before confirming.</p></header><div className="form-fields">{declarationFields.map((field) => <Field key={field.key} field={field} value={answers[field.key]} onChange={(value) => setAnswer(field.key, value)} />)}</div>{Object.keys(uploadProgress).length > 0 && <div className="upload-progress-panel"><h3>Photo upload status <em>Status muat naik gambar</em></h3>{Object.entries(uploadProgress).map(([key, item]) => <div className={`upload-progress-row ${item.status}`} key={key}><div><span>{item.label}</span><b>{item.status === 'failed' ? 'Failed — retry submission' : `${item.uploaded}/${item.total} · ${item.status}`}</b></div><progress max={item.total} value={item.uploaded} /></div>)}</div>}<div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(photoStep)} disabled={submitting}>Back</button><button className="button button-dark" disabled={submitting}>{submitting ? <><LoaderCircle className="spin" size={17} /> Submitting</> : <>Submit application <ArrowRight size={17} /></>}</button></div></form>}
 
-      {step === successStep && <section className="success-step"><div className="success-icon"><Check size={28} /></div><p className="section-label">APPLICATION RECEIVED</p><h2>Thank you.</h2><p>Your application and photos have been submitted. If shortlisted, Nexa Model will contact you through WhatsApp.</p><p className="bm-text">Permohonan dan gambar anda telah diterima. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.</p><p className="reference-label">Your application reference <em>Rujukan permohonan anda</em></p><code>{applicationId}</code><small className="reference-help">Keep this reference for future communication with Nexa Model.<em>Simpan rujukan ini untuk urusan dengan Nexa Model pada masa hadapan.</em></small><Link className="button button-dark" to="/">Return home</Link></section>}
+      {step === successStep && <section className="success-step"><div className="success-icon"><Check size={28} /></div><p className="section-label">APPLICATION SUBMITTED</p><h2>Your application was submitted successfully.</h2><p>A receipt has been sent to your email. Nexa Model will contact you through WhatsApp if you are shortlisted.</p><p className="bm-text">Permohonan anda telah berjaya dihantar. Resit telah dihantar ke e-mel anda. Nexa Model akan menghubungi anda melalui WhatsApp sekiranya anda disenarai pendek.</p><p className="reference-label">Your application reference <em>Rujukan permohonan anda</em></p><code>{applicationId}</code><small className="reference-help">Keep this reference for future communication with Nexa Model.<em>Simpan rujukan ini untuk urusan dengan Nexa Model pada masa hadapan.</em></small><Link className="button button-dark" to="/">Return home</Link></section>}
       </>}
       {!alreadySubmitted && message && <p className="form-message" role="status">{message}</p>}
     </div><aside className="application-visual" aria-hidden="true">
