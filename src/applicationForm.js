@@ -5,7 +5,7 @@ export const applicationSections = [
     descriptionBm: 'Pemohon mestilah berumur antara 18 hingga 30 tahun dan memohon secara sukarela.',
     fields: [
       { key: 'email', type: 'email', label: 'Email Address', labelBm: 'Alamat E-mel', required: true, maxLength: 254, autocomplete: 'email', placeholder: 'name@gmail.com' },
-      { key: 'age_gate', type: 'radio', label: 'Are you 18 years old or above and below 30 years old?', labelBm: 'Adakah anda berumur 18 tahun ke atas dan tidak melebihi 30 tahun?', options: ['Yes', 'No'], required: true },
+      { key: 'age_gate', type: 'radio', label: 'Are you aged 18 to 30 years old?', labelBm: 'Adakah anda berumur 18 hingga 30 tahun?', options: ['Yes', 'No'], required: true },
       { key: 'information_consent', type: 'checkbox', label: 'I have read and understood the information provided above.', labelBm: 'Saya telah membaca dan memahami maklumat yang diberikan.', options: ['I understand and agree to proceed.'], required: true },
       { key: 'voluntary_application', type: 'radio', label: 'Are you applying voluntarily for modelling opportunities through Nexa Model?', labelBm: 'Adakah anda memohon secara sukarela untuk peluang modelling melalui Nexa Model?', options: ['Yes', 'No'], required: true },
     ],

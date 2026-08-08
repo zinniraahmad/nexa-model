@@ -1,5 +1,5 @@
 import { applicationSections, declarationFields, photoFields } from './applicationForm.js'
-import { apiJson as json } from './apiResponse.js'
+import { API_SECURITY_HEADERS, apiJson as json } from './apiResponse.js'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
 const UPLOAD_TOKEN_TTL_MS = 60 * 60 * 1000
@@ -9,6 +9,7 @@ const MAX_ACCESS_REQUEST_BYTES = 4 * 1024
 const MAX_APPLY_REQUEST_BYTES = 120 * 1024
 const MAX_FINALIZE_REQUEST_BYTES = 4 * 1024
 const MAX_MULTIPART_REQUEST_BYTES = (10 * 1024 * 1024) + (64 * 1024)
+const SPA_PATHS = new Set(['/', '/login', '/portal', '/apply', '/privacy'])
 const APPLICATION_ACCESS_MESSAGE = 'If the address can continue, instructions have been sent to that email. Check the inbox and spam folder. / Jika alamat tersebut boleh diteruskan, arahan telah dihantar ke e-mel berkenaan. Semak peti masuk dan folder spam.'
 const IMAGE_SIGNATURES = [
   { mime: 'image/png', test: (bytes) => bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a },
@@ -85,6 +86,17 @@ async function parseMultipartRequest(request) {
 
 function applicationAccessAccepted() {
   return json({ success: true, message: APPLICATION_ACCESS_MESSAGE }, { status: 202 })
+}
+
+function notFoundPage() {
+  return new Response('<!doctype html><html lang="en-MY"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Page not found | Nexa Model</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#0b0b0a;color:#f5f2ea;font:16px system-ui,sans-serif}main{max-width:560px}p{color:#b8b0a5;line-height:1.6}a{display:inline-block;margin-top:16px;color:#f5f2ea}</style></head><body><main><p>404</p><h1>Page not found.</h1><p>The page you requested does not exist or may have moved.</p><p>Halaman yang anda minta tidak wujud atau mungkin telah dipindahkan.</p><a href="/">Return to homepage</a></main></body></html>', { status: 404, headers: { ...API_SECURITY_HEADERS, 'Content-Type': 'text/html; charset=UTF-8', 'X-Robots-Tag': 'noindex' } })
+}
+
+async function handleStaticRequest(request, env, url) {
+  const asset = await env.ASSETS.fetch(request)
+  if (asset.status !== 404 || !['GET', 'HEAD'].includes(request.method)) return asset
+  if (!SPA_PATHS.has(url.pathname)) return notFoundPage()
+  return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request))
 }
 
 function applicationCredentialRequired() {
@@ -638,8 +650,8 @@ export default {
     if (url.pathname === '/api/upload' && request.method === 'POST') return handleUpload(request, env)
     if (url.pathname === '/api/finalize' && request.method === 'POST') return handleFinalize(request, env)
     if (url.pathname.startsWith('/api/')) return json({ success: false, error: 'Not found.' }, { status: 404 })
-    return env.ASSETS.fetch(request)
+    return handleStaticRequest(request, env, url)
   },
 }
 
-export { applicationAccessAccepted, applicationCredentialRequired, authorizePendingReplacement, detectImageMime, handleApplicationAccess, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers }
+export { applicationAccessAccepted, applicationCredentialRequired, authorizePendingReplacement, detectImageMime, handleApplicationAccess, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers }

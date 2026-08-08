@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { applicationSections, declarationFields } from '../src/applicationForm.js'
-import { authorizePendingReplacement, detectImageMime, handleApplicationAccess, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
+import { authorizePendingReplacement, detectImageMime, handleApplicationAccess, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
 import { API_SECURITY_HEADERS, apiJson } from '../src/apiResponse.js'
 import { requireAdmin } from '../admin/access.js'
 
@@ -218,4 +218,47 @@ test('privacy notice covers the reviewed bilingual PDPA disclosures', () => {
   }
   assert.doesNotMatch(notice, /\bSSM\b|registered business number|nombor (?:perniagaan|pendaftaran)/i)
   assert.match(declarationFields.find((field) => field.key === 'privacy_notice_consent').label, /outside Malaysia/i)
+})
+
+test('serves only declared SPA routes and returns a real 404 for unknown paths', async () => {
+  const requestedPaths = []
+  const env = {
+    ASSETS: {
+      async fetch(request) {
+        const pathname = new URL(request.url).pathname
+        requestedPaths.push(pathname)
+        if (pathname === '/index.html') return new Response('<div id="root"></div>', { status: 200 })
+        if (pathname === '/favicon.svg') return new Response('<svg/>', { status: 200 })
+        return new Response('missing', { status: 404 })
+      },
+    },
+  }
+
+  const known = await handleStaticRequest(new Request('https://nexa-model.com/apply'), env, new URL('https://nexa-model.com/apply'))
+  assert.equal(known.status, 200)
+  assert.deepEqual(requestedPaths, ['/apply', '/index.html'])
+
+  const unknown = await handleStaticRequest(new Request('https://nexa-model.com/not-a-page'), env, new URL('https://nexa-model.com/not-a-page'))
+  assert.equal(unknown.status, 404)
+  assert.equal(unknown.headers.get('X-Robots-Tag'), 'noindex')
+  assert.equal(unknown.headers.get('X-Content-Type-Options'), 'nosniff')
+  assert.equal(unknown.headers.get('Cache-Control'), 'no-store, max-age=0')
+  assert.match(await unknown.text(), /Page not found/i)
+
+  const asset = await handleStaticRequest(new Request('https://nexa-model.com/favicon.svg'), env, new URL('https://nexa-model.com/favicon.svg'))
+  assert.equal(asset.status, 200)
+})
+
+test('includes crawl assets, social metadata and consistent age wording', () => {
+  const index = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
+  const robots = readFileSync(new URL('../public/robots.txt', import.meta.url), 'utf8')
+  const sitemap = readFileSync(new URL('../public/sitemap.xml', import.meta.url), 'utf8')
+  const ageGate = applicationSections[0].fields.find((field) => field.key === 'age_gate')
+  assert.match(index, /rel="canonical" href="https:\/\/nexa-model\.com\/"/)
+  assert.match(index, /property="og:title"/)
+  assert.match(index, /name="twitter:card" content="summary"/)
+  assert.match(robots, /Sitemap: https:\/\/nexa-model\.com\/sitemap\.xml/)
+  assert.match(sitemap, /https:\/\/nexa-model\.com\/apply/)
+  assert.equal(ageGate.label, 'Are you aged 18 to 30 years old?')
+  assert.equal(ageGate.labelBm, 'Adakah anda berumur 18 hingga 30 tahun?')
 })
