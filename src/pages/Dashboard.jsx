@@ -1,7 +1,7 @@
 import { Bell, BookOpen, Check, ChevronRight, ClipboardCheck, FileVideo, LogOut, Menu, UserRound } from 'lucide-react'
 import { Link } from '../router'
 import ThemeToggle from '../components/ThemeToggle'
-import officialLogo from '../assets/images/official_logo_2Kpx.png'
+import officialLogo from '../assets/images/official_logo_2Kpx.webp'
 
 const stages = [
   ['Application', 'Completed', true],

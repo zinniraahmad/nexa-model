@@ -1,7 +1,7 @@
 import { Menu, MoveUpRight } from 'lucide-react'
 import { Link } from '../router'
 import ThemeToggle from './ThemeToggle'
-import officialLogo from '../assets/images/official_logo_2Kpx.png'
+import officialLogo from '../assets/images/official_logo_2Kpx.webp'
 
 export default function Navbar() {
   return (

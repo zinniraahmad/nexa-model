@@ -1,4 +1,4 @@
-import officialLogo from '../assets/images/official_logo_2Kpx.png'
+import officialLogo from '../assets/images/official_logo_2Kpx.webp'
 import { Link } from '../router'
 
 export default function Footer() {
