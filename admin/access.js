@@ -1,4 +1,5 @@
 import { apiJson } from '../src/apiResponse.js'
+import { logError } from './observability.js'
 
 let cachedKeys
 let cachedAt = 0
@@ -42,7 +43,10 @@ export async function requireAdmin(request, env) {
   }
 
   const token = request.headers.get('Cf-Access-Jwt-Assertion')
-  if (!token) return { error: apiJson({ error: 'Your admin session has expired.', code: 'SESSION_EXPIRED' }, { status: 401 }) }
+  if (!token) {
+    await recordAuthenticationDenied(request, env, 'missing_token')
+    return { error: apiJson({ error: 'Your admin session has expired.', code: 'SESSION_EXPIRED' }, { status: 401 }) }
+  }
 
   try {
     const parts = token.split('.')
@@ -76,12 +80,28 @@ export async function requireAdmin(request, env) {
       return { error: apiJson({ error: 'Admin allowlist is not configured.', code: 'AUTH_NOT_CONFIGURED' }, { status: 503 }) }
     }
     if (!email || !allowlist.includes(email)) {
+      await recordAuthenticationDenied(request, env, 'email_not_allowed', email || null)
       return { error: apiJson({ error: 'You do not have permission to review applications.', code: 'FORBIDDEN' }, { status: 403 }) }
     }
 
     return { email }
   } catch (error) {
-    console.error('Admin authentication failed', error)
+    await recordAuthenticationDenied(request, env, 'invalid_token')
+    logError('security.admin_authentication_denied', { reasonCode: 'invalid_token', requestId: request.headers.get('cf-ray') || '' }, error)
     return { error: apiJson({ error: 'Your admin session is invalid or has expired.', code: 'SESSION_EXPIRED' }, { status: 401 }) }
   }
 }
+
+async function recordAuthenticationDenied(request, env, reasonCode, actorEmail = null) {
+  if (!env.DB?.prepare) return
+  try {
+    await env.DB.prepare(`
+      INSERT INTO admin_security_audit (event_type, reason_code, actor_email, request_id)
+      VALUES ('authentication_denied', ?, ?, ?)
+    `).bind(reasonCode, actorEmail, request.headers.get('cf-ray') || null).run()
+  } catch (error) {
+    logError('security.admin_audit_write_failed', { reasonCode, requestId: request.headers.get('cf-ray') || '' }, error)
+  }
+}
+
+export { recordAuthenticationDenied }

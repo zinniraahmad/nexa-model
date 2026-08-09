@@ -23,7 +23,7 @@ npx wrangler d1 execute nexa-recovery-YYYYMMDD --remote --file <encrypted-restri
 
 ## Synthetic restoration drill
 
-The repository script `scripts/d1-recovery-drill.ps1` builds an isolated local D1 store, inserts only synthetic data, exports its SQLite database, restores it to a second isolated store and verifies the applicant, details and photo rows. It never uses `--remote` and refuses paths outside the system temporary directory.
+The repository script `scripts/d1-recovery-drill.ps1` builds an isolated local D1 store, inserts only synthetic data, exports its SQLite database, restores it to a second isolated store and verifies the current application schema, marital status, review/deletion/security audit records, and operational failure/alert records. It never uses `--remote` and refuses paths outside the system temporary directory.
 
 Run:
 
@@ -36,3 +36,6 @@ Record the run date, Wrangler version, row-count result and backup checksum belo
 | Date | Scope | Result | Evidence |
 |---|---|---|---|
 | 2026-08-08 | Local isolated D1, synthetic applicant only | Pass: applicants=1, details=1, photos=1 | SHA-256 `32CC1FA2B318B569B176F73FBD2063B615553A6F2CE3A96A38DDB4A968690941`; temporary backup securely removed after verification |
+| 2026-08-09 | Local isolated D1, current application and operations schema | Pass: core=3, review/deletion/security audits=1 each, operational failure/alert=1 each, marital_status=single | SHA-256 `1ABC18C56FD50D9AC84BE34A189C6DA358C83E35EC23514E48E2CB6F53AE7D9F`; temporary backup securely removed after verification |
+
+Re-run and add a dated row after every migration that changes recoverable or audit data. A passing drill must now include the current audit and operations tables, not only the original three application tables.

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Clock, Copy, Database, Download, ExternalLink, Image, ImageOff, LoaderCircle, LogIn, LogOut, Mail, MapPin, Moon, Phone, RefreshCw, Search, ShieldAlert, Sun, Tag, Trash2, Users, WifiOff, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { AlertCircle, AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, Database, Download, ExternalLink, Image, ImageOff, LoaderCircle, LogIn, LogOut, Mail, MapPin, Moon, Phone, RefreshCw, Search, ShieldAlert, Sun, Tag, Trash2, Users, WifiOff, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { applicationSections, declarationFields, photoFields } from '../../src/applicationForm.js'
 
 const MALAYSIA_TIME_ZONE = 'Asia/Kuala_Lumpur'
 const statusLabels = { submitted: 'Submitted', reviewing: 'Reviewing', shortlisted: 'Shortlisted', contacted: 'Contacted', rejected: 'Rejected' }
 const emptySummary = { total: 0, submitted: 0, reviewing: 0, shortlisted: 0, contacted: 0, rejected: 0, retention_overdue: 0 }
+const emptyPagination = { page: 1, page_size: 50, total: 0, total_pages: 1, has_previous: false, has_next: false }
 const sortOptions = [
   ['submitted_at:desc', 'Newest first'], ['submitted_at:asc', 'Oldest first'],
   ['age:asc', 'Age: youngest first'], ['age:desc', 'Age: oldest first'],
@@ -119,7 +120,8 @@ async function api(path, options) {
   let response
   try {
     response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options?.headers } })
-  } catch {
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error
     const offline = typeof navigator !== 'undefined' && !navigator.onLine
     throw new AdminApiError(offline ? 'You are offline. Check your internet connection and try again.' : 'The admin service could not be reached. Check your connection and try again.', { code: 'NETWORK_ERROR' })
   }
@@ -245,15 +247,23 @@ function StatusBadge({ status }) {
   return <span className={`status status-${status}`}>{status === 'orphaned' ? 'Cleanup needed' : (statusLabels[status] || status)}</span>
 }
 
-function SummaryCount({ value, loading }) {
+function SummaryCount({ value, loading, unavailable }) {
   if (loading) return <span className="summary-count-skeleton skeleton-line" aria-hidden="true" />
+  if (unavailable) return <strong className="summary-unavailable" aria-label="Data unavailable">—</strong>
   return <strong>{Number(value || 0)}</strong>
 }
 
-function ApplicationListSkeleton() {
+function ApplicationListHeader({ deletedView }) {
+  return <div className={`application-list-header${deletedView ? ' deleted-list-header' : ''}`} aria-hidden="true">
+    {!deletedView && <span />}<span>Applicant</span><span>Location</span><span>Age</span><span>Photos</span><span>Status</span><span>{deletedView ? 'Delete after' : 'Submitted'}</span><span>Actions</span>
+  </div>
+}
+
+function ApplicationListSkeleton({ deletedView }) {
   return <div className="application-list application-list-skeleton" aria-busy="true" aria-label="Loading applications">
-    {Array.from({ length: 6 }, (_, index) => <div className="application-row" aria-hidden="true" key={index}>
-      <span className="skeleton-block skeleton-checkbox" />
+    <ApplicationListHeader deletedView={deletedView} />
+    {Array.from({ length: 6 }, (_, index) => <div className={`application-row${deletedView ? ' deleted-row' : ''}`} aria-hidden="true" key={index}>
+      {!deletedView && <span className="skeleton-block skeleton-checkbox" />}
       <span className="skeleton-applicant"><i className="skeleton-line" /><i className="skeleton-line" /></span>
       <span className="skeleton-line skeleton-list-location" />
       <span className="skeleton-line skeleton-list-small" />
@@ -266,16 +276,17 @@ function ApplicationListSkeleton() {
 }
 
 function ApplicationList({ applications, loading, selectedIds, deletedView, restoringId, hasFilters, onToggle, onSelect, onDelete, onRestore, onClearFilters, onShowActive }) {
-  if (loading) return <ApplicationListSkeleton />
+  if (loading) return <ApplicationListSkeleton deletedView={deletedView} />
   if (!applications.length) return <div className="empty actionable-empty-state"><Users /><strong>{deletedView ? 'Recently Deleted is empty' : hasFilters ? 'No matching applications' : 'No applications yet'}</strong><p>{deletedView ? 'Deleted applications will remain here for 30 days and can be restored during that period.' : hasFilters ? 'Try clearing the current search and filters to see all applications.' : 'New candidate submissions will appear here automatically.'}</p>{deletedView ? <button onClick={onShowActive}>View active applications</button> : hasFilters ? <button onClick={onClearFilters}>Clear filters</button> : null}</div>
   return <div className="application-list">
+    <ApplicationListHeader deletedView={deletedView} />
     {applications.map((item) => <div className={`application-row${deletedView ? ' deleted-row' : ''}${item.retention_warning && !deletedView ? ' retention-row' : ''}${item.application_status === 'orphaned' ? ' orphaned-row' : ''}${selectedIds.has(item.application_id) ? ' selected-row' : ''}`} key={item.application_id} role={!deletedView && item.application_status !== 'orphaned' ? 'button' : undefined} tabIndex={!deletedView && item.application_status !== 'orphaned' ? '0' : undefined} onClick={() => { if (!deletedView && item.application_status !== 'orphaned') onSelect(item.application_id) }} onKeyDown={(event) => { if (event.target === event.currentTarget && ['Enter', ' '].includes(event.key) && !deletedView && item.application_status !== 'orphaned') { event.preventDefault(); onSelect(item.application_id) } }}>
-      {deletedView ? <span className="deleted-row-marker"><Trash2 size={15} /></span> : <input className="row-checkbox" type="checkbox" checked={selectedIds.has(item.application_id)} disabled={item.application_status === 'orphaned'} aria-label={`Select ${item.full_name}`} onClick={(event) => event.stopPropagation()} onChange={() => onToggle(item.application_id)} />}
+      {!deletedView && <label className="row-checkbox-target" onClick={(event) => event.stopPropagation()}><input className="row-checkbox" type="checkbox" checked={selectedIds.has(item.application_id)} disabled={item.application_status === 'orphaned'} aria-label={`Select ${item.full_name}`} onChange={() => onToggle(item.application_id)} /></label>}
       <div className="applicant-primary"><strong>{item.full_name}</strong><span>{item.email}</span></div>
       <span className="location">{item.current_location}</span>
       <span className="age">{item.age ?? '—'} yrs</span>
       <span className="photo-count"><Image size={15} /> {item.photo_count}</span>
-      {deletedView ? <span className="status status-deleted">Recently deleted</span> : <StatusBadge status={item.application_status} />}
+      {deletedView ? <span className="status status-deleted">Deleted</span> : <StatusBadge status={item.application_status} />}
       <time className={!deletedView && item.retention_overdue ? 'retention-overdue' : ''} title={deletedView ? `Permanent deletion after ${formatDate(item.delete_after)}` : `Review for deletion by ${formatDate(item.retention_due_at)}`}>{deletedView ? `Until ${formatDate(item.delete_after)}` : <>{item.retention_warning ? <Clock size={13} /> : null}{formatDate(item.submitted_at)}</>}</time>
       <div className="row-actions">
         {deletedView ? <><button className="restore-row-button" disabled={restoringId === item.application_id} title={`Restore ${item.full_name}`} aria-label={`Restore ${item.full_name}`} onClick={(event) => { event.stopPropagation(); onRestore(item) }}>{restoringId === item.application_id ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}</button>{Date.parse(item.delete_after) <= Date.now() && <button className="delete-row-button" title={`Permanently delete ${item.full_name}`} aria-label={`Permanently delete ${item.full_name}`} onClick={(event) => { event.stopPropagation(); onDelete(item, 'permanent') }}><Trash2 size={17} /></button>}</> : <>
@@ -295,7 +306,7 @@ function DeleteDialog({ application, deletionType, deleting, error, onCancel, on
   const permanent = deletionType === 'permanent'
   const dialogRef = useDialogFocus(onCancel, deleting)
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) onCancel() }}>
-    <section ref={dialogRef} className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" tabIndex="-1">
+    <section ref={dialogRef} className="dialog delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" tabIndex="-1">
       <button className="dialog-close" onClick={onCancel} disabled={deleting} aria-label="Close"><X size={18} /></button>
       <div className={`dialog-icon${retentionCleanup ? ' retention-dialog-icon' : ''}`}>{retentionCleanup ? <Clock size={22} /> : <Trash2 size={22} />}</div>
       <h2 id="delete-title">{permanent ? 'Permanently delete this application?' : retentionCleanup ? 'Move to retention cleanup?' : 'Delete this application?'}</h2>
@@ -318,6 +329,20 @@ function ShortlistDialog({ application, confirming, error, onCancel, onConfirm }
       <p>Are you sure you want to shortlist <strong>{application.full_name}</strong>? This action will save the review and send a shortlist email to the candidate.</p>
       {error && <p className="form-error" role="alert">{error.message || error}{error.code === 'SESSION_EXPIRED' && <button type="button" className="inline-action" onClick={signInAgain}>Sign in again</button>}</p>}
       <div className="dialog-actions"><button className="cancel-button" onClick={onCancel} disabled={confirming}>No</button><button className="shortlist-confirm-button" onClick={onConfirm} disabled={confirming}>{confirming ? 'Sending…' : 'Yes'}</button></div>
+    </section>
+  </div>
+}
+
+function RestoreDialog({ application, restoring, error, onCancel, onConfirm }) {
+  const dialogRef = useDialogFocus(onCancel, restoring)
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !restoring) onCancel() }}>
+    <section ref={dialogRef} className="dialog restore-dialog" role="alertdialog" aria-modal="true" aria-labelledby="restore-title" tabIndex="-1">
+      <button className="dialog-close" onClick={onCancel} disabled={restoring} aria-label="Close"><X size={18} /></button>
+      <div className="dialog-icon"><RefreshCw size={22} /></div>
+      <h2 id="restore-title">Restore this candidate?</h2>
+      <p>Are you sure you want to restore this candidate (<strong>{application.full_name}</strong>)?</p>
+      {error && <p className="form-error" role="alert">{error.message || error}{error.code === 'SESSION_EXPIRED' && <button type="button" className="inline-action" onClick={signInAgain}>Sign in again</button>}</p>}
+      <div className="dialog-actions"><button className="cancel-button" onClick={onCancel} disabled={restoring}>Cancel</button><button className="restore-confirm-button" onClick={onConfirm} disabled={restoring}>{restoring ? 'Restoring…' : 'Restore candidate'}</button></div>
     </section>
   </div>
 }
@@ -517,7 +542,7 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
     <section className="applicant-hero">
       <div className="featured-photo">
         {featuredPhoto ? <button type="button" onClick={() => { setLightboxIndex(record.photos.findIndex((photo) => photo.file_id === featuredPhoto.file_id)); setZoom(1) }} aria-label="Open front-facing photo">
-          <img src={featuredPhoto.file_url} alt="Front-facing applicant" />
+          <img src={featuredPhoto.thumbnail_url || featuredPhoto.file_url} alt="Front-facing applicant" />
           <span><ZoomIn size={16} /> View photo</span>
         </button> : <div className="featured-photo-missing"><ImageOff size={28} /><span>Front-facing photo unavailable</span></div>}
       </div>
@@ -572,7 +597,7 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
           {categorizedPhotos.map((category) => <div className="photo-group" key={category.key}>
             <h4>{category.label}</h4>
             <div className="photo-grid">{category.photos.map((photo) => <button type="button" onClick={() => { setLightboxIndex(record.photos.findIndex((item) => item.file_id === photo.file_id)); setZoom(1) }} key={photo.file_id}>
-              <img src={photo.file_url} alt={photoMap.get(photo.photo_type) || category.label} loading="lazy" />
+              <img src={photo.thumbnail_url || photo.file_url} alt={photoMap.get(photo.photo_type) || category.label} loading="lazy" decoding="async" />
               <span><ZoomIn size={14} /> {photo.file_name}</span>
             </button>)}</div>
           </div>)}
@@ -615,6 +640,7 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
 export default function App() {
   const [applications, setApplications] = useState([])
   const [summary, setSummary] = useState(emptySummary)
+  const [pagination, setPagination] = useState(emptyPagination)
   const [selected, setSelected] = useState(() => initialParam('application') || null)
   const [search, setSearch] = useState(() => initialParam('search'))
   const [status, setStatus] = useState(() => initialParam('status'))
@@ -630,23 +656,29 @@ export default function App() {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [restoringId, setRestoringId] = useState(null)
+  const [restoreTarget, setRestoreTarget] = useState(null)
+  const [restoreError, setRestoreError] = useState(null)
   const [toast, setToast] = useState(null)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [bulkStatus, setBulkStatus] = useState('reviewing')
   const [bulkSaving, setBulkSaving] = useState(false)
   const [bulkMessage, setBulkMessage] = useState('')
   const [lastUpdated, setLastUpdated] = useState(null)
+  const [page, setPage] = useState(() => Math.max(1, Number.parseInt(initialParam('page', '1'), 10) || 1))
+  const [filtersExpanded, setFiltersExpanded] = useState(false)
+  const loadRequestRef = useRef(0)
 
   const [sort, direction] = sortValue.split(':')
   const query = useMemo(() => new URLSearchParams({
     ...(search && { search }), ...(status && { status }), ...(dateFrom && { date_from: dateFrom }),
-    ...(dateTo && { date_to: dateTo }), ...(deletedView && { deleted: 'only' }), sort, direction,
-  }).toString(), [search, status, dateFrom, dateTo, deletedView, sort, direction])
+    ...(dateTo && { date_to: dateTo }), ...(deletedView && { deleted: 'only' }), sort, direction, ...(page > 1 && { page: String(page) }),
+  }).toString(), [search, status, dateFrom, dateTo, deletedView, sort, direction, page])
   const retentionWarnings = deletedView ? [] : applications.filter((application) => application.retention_warning)
   const selectedIndex = applications.findIndex((application) => application.application_id === selected)
   const previousId = selectedIndex > 0 ? applications[selectedIndex - 1].application_id : null
   const nextId = selectedIndex >= 0 && selectedIndex < applications.length - 1 ? applications[selectedIndex + 1].application_id : null
   const hasFilters = Boolean(search || status || dateFrom || dateTo || sortValue !== 'submitted_at:desc')
+  const advancedFilterCount = Number(Boolean(dateFrom)) + Number(Boolean(dateTo)) + Number(sortValue !== 'submitted_at:desc')
 
   function showToast(message, type = 'success') {
     setToast({ id: Date.now(), message, type })
@@ -658,24 +690,32 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [toast])
 
-  function loadApplications() {
+  function loadApplications({ signal, requestId: suppliedRequestId } = {}) {
+    const requestId = suppliedRequestId ?? ++loadRequestRef.current
     setLoading(true)
     setError(null)
-    api(`/api/admin/applications?${query}`)
+    return api(`/api/admin/applications?${query}`, { signal })
       .then((data) => {
+        if (requestId !== loadRequestRef.current) return
         setApplications(data.applications)
         setSummary(data.summary || emptySummary)
+        setPagination(data.pagination || emptyPagination)
+        if (data.pagination?.page > data.pagination?.total_pages) setPage(data.pagination.total_pages)
         setLastUpdated(new Date().toISOString())
         const availableIds = new Set(data.applications.map((application) => application.application_id))
         setSelectedIds((current) => new Set([...current].filter((id) => availableIds.has(id))))
       })
-      .catch(setError)
-      .finally(() => setLoading(false))
+      .catch((err) => { if (requestId === loadRequestRef.current && err?.name !== 'AbortError') setError(err) })
+      .finally(() => { if (requestId === loadRequestRef.current) setLoading(false) })
   }
 
   useEffect(() => {
-    const timer = setTimeout(loadApplications, 250)
-    return () => clearTimeout(timer)
+    const controller = new AbortController()
+    const requestId = ++loadRequestRef.current
+    setLoading(true)
+    setError(null)
+    const timer = setTimeout(() => loadApplications({ signal: controller.signal, requestId }), 350)
+    return () => { clearTimeout(timer); controller.abort() }
   }, [query])
 
   useEffect(() => {
@@ -700,8 +740,13 @@ export default function App() {
 
   function changeDeletedView(nextDeletedView) {
     setDeletedView(nextDeletedView)
+    setPage(1)
     setSelected(null)
     setSelectedIds(new Set())
+    setApplications([])
+    setPagination(emptyPagination)
+    setLoading(true)
+    setError(null)
   }
 
   function clearFilters() {
@@ -710,6 +755,13 @@ export default function App() {
     setDateFrom('')
     setDateTo('')
     setSortValue('submitted_at:desc')
+    setPage(1)
+    setFiltersExpanded(false)
+  }
+
+  function applyStatusFilter(nextStatus) {
+    setStatus(nextStatus)
+    setPage(1)
   }
 
   function toggleApplication(applicationId) {
@@ -765,12 +817,14 @@ export default function App() {
 
   async function restoreApplication(application) {
     setRestoringId(application.application_id)
+    setRestoreError(null)
     try {
       await api(`/api/admin/applications/${encodeURIComponent(application.application_id)}/restore`, { method: 'POST', body: '{}' })
+      setRestoreTarget(null)
       showToast(`${application.full_name} was restored.`)
       loadApplications()
     } catch (err) {
-      setError(err)
+      setRestoreError(err)
     } finally {
       setRestoringId(null)
     }
@@ -786,34 +840,40 @@ export default function App() {
           <button className={deletedView ? 'active' : undefined} aria-pressed={deletedView} onClick={() => changeDeletedView(true)}>Recently deleted</button>
         </nav>
         {!deletedView && <section className="summary-grid" aria-label="Application summary" aria-busy={loading}>
-          <article className="summary-card summary-total">
+          <button type="button" className={`summary-card summary-total${!status ? ' active' : ''}`} aria-pressed={!status} disabled={loading || Boolean(error)} onClick={() => applyStatusFilter('')}>
             <span className="summary-label"><i aria-hidden="true" />Total</span>
-            <SummaryCount value={summary.total} loading={loading} />
-          </article>
-          {Object.entries(statusLabels).map(([key, label]) => <article className={`summary-card summary-${key}`} key={key}>
+            <SummaryCount value={summary.total} loading={loading} unavailable={Boolean(error)} />
+          </button>
+          {Object.entries(statusLabels).map(([key, label]) => <button type="button" className={`summary-card summary-${key}${status === key ? ' active' : ''}`} aria-pressed={status === key} disabled={loading || Boolean(error)} onClick={() => applyStatusFilter(key)} key={key}>
             <span className="summary-label"><i aria-hidden="true" />{label}</span>
-            <SummaryCount value={summary[key]} loading={loading} />
-          </article>)}
+            <SummaryCount value={summary[key]} loading={loading} unavailable={Boolean(error)} />
+          </button>)}
         </section>}
         {retentionWarnings.length > 0 && <section className="retention-alert" role="status"><AlertTriangle size={20} /><div><strong>{retentionWarnings.length} retention review{retentionWarnings.length === 1 ? '' : 's'} due</strong><span>These applications reach their six-month deletion date within 30 days or are already overdue. Review before deleting.</span></div></section>}
-        <section className="toolbar primary-filters"><label htmlFor="application-search"><span className="sr-only">Search applications</span><Search size={18} aria-hidden="true" /><input id="application-search" aria-label="Search applications" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, email, phone or reference" /></label><select aria-label="Filter by status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></section>
-        <section className="advanced-filters" aria-label="Application filters">
-          <label>From<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
-          <label>To<input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} /></label>
-          <label>Sort<select value={sortValue} onChange={(event) => setSortValue(event.target.value)}>{sortOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+        <section className="toolbar primary-filters"><label htmlFor="application-search"><span className="sr-only">Search applications</span><Search size={18} aria-hidden="true" /><input id="application-search" aria-label="Search applications" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1) }} placeholder="Search name, email, phone or reference" /></label><select aria-label="Filter by status" value={status} onChange={(event) => applyStatusFilter(event.target.value)}><option value="">All statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></section>
+        <button type="button" className="mobile-filter-toggle" aria-expanded={filtersExpanded} aria-controls="advanced-application-filters" onClick={() => setFiltersExpanded((current) => !current)}><span>More filters{advancedFilterCount ? ` (${advancedFilterCount})` : ''}</span><ChevronDown className={filtersExpanded ? 'expanded' : undefined} size={18} /></button>
+        <section id="advanced-application-filters" className={`advanced-filters${filtersExpanded ? ' expanded' : ''}`} aria-label="Application filters">
+          <label>From<input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1) }} /></label>
+          <label>To<input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => { setDateTo(event.target.value); setPage(1) }} /></label>
+          <label>Sort<select value={sortValue} onChange={(event) => { setSortValue(event.target.value); setPage(1) }}>{sortOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
           <button className="secondary-button clear-filters" onClick={clearFilters}>Clear</button>
-          <button className="export-button" disabled={loading || !applications.length} onClick={() => exportApplications(applications)}><Download size={16} /> Export CSV</button>
+          <button className="export-button" title="Exports the applications shown on this page" disabled={loading || !applications.length} onClick={() => exportApplications(applications)}><Download size={16} /> Export CSV</button>
         </section>
         {!deletedView && !error && !loading && applications.length > 0 && <section className="selection-toolbar">
           <label><input type="checkbox" checked={applications.filter((item) => item.application_status !== 'orphaned').length > 0 && applications.filter((item) => item.application_status !== 'orphaned').every((item) => selectedIds.has(item.application_id))} onChange={toggleAllVisible} /> Select all visible</label>
           {selectedIds.size > 0 && <div><strong>{selectedIds.size} selected</strong><select aria-label="Bulk status" value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value)}>{Object.entries(statusLabels).filter(([value]) => value !== 'shortlisted').map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><button onClick={updateSelectedStatus} disabled={bulkSaving}>{bulkSaving ? 'Updating…' : 'Apply status'}</button></div>}
           {bulkMessage && <span role="status">{bulkMessage}</span>}
         </section>}
-        {error ? <ErrorState error={error} onRetry={loadApplications} /> : <ApplicationList applications={applications} loading={loading} selectedIds={selectedIds} deletedView={deletedView} restoringId={restoringId} hasFilters={hasFilters} onToggle={toggleApplication} onSelect={selectApplication} onDelete={(application, deletionType) => { setDeleteError(''); setDeleteTarget({ application, deletionType }) }} onRestore={restoreApplication} onClearFilters={clearFilters} onShowActive={() => changeDeletedView(false)} />}
+        {error ? <ErrorState error={error} onRetry={loadApplications} /> : <ApplicationList applications={applications} loading={loading} selectedIds={selectedIds} deletedView={deletedView} restoringId={restoringId} hasFilters={hasFilters} onToggle={toggleApplication} onSelect={selectApplication} onDelete={(application, deletionType) => { setDeleteError(''); setDeleteTarget({ application, deletionType }) }} onRestore={(application) => { setRestoreError(null); setRestoreTarget(application) }} onClearFilters={clearFilters} onShowActive={() => changeDeletedView(false)} />}
+        {!error && !loading && pagination.total > 0 && <nav className="pagination" aria-label="Application pages">
+          <span>Showing {(pagination.page - 1) * pagination.page_size + 1}–{Math.min(pagination.page * pagination.page_size, pagination.total)} of {pagination.total}</span>
+          <div><button type="button" disabled={!pagination.has_previous} onClick={() => { setPage((current) => Math.max(1, current - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}><ChevronLeft size={17} /> Previous</button><span>Page {pagination.page} of {pagination.total_pages}</span><button type="button" disabled={!pagination.has_next} onClick={() => { setPage((current) => current + 1); window.scrollTo({ top: 0, behavior: 'smooth' }) }}>Next <ChevronRight size={17} /></button></div>
+        </nav>}
       </>}
       {selected && <Detail applicationId={selected} previousId={previousId} nextId={nextId} onBack={() => setSelected(null)} onNavigate={selectApplication} onUpdated={loadApplications} onToast={showToast} />}
     </div>
     {deleteTarget && <DeleteDialog application={deleteTarget.application} deletionType={deleteTarget.deletionType} deleting={deleting} error={deleteError} onCancel={() => setDeleteTarget(null)} onConfirm={deleteApplication} />}
+    {restoreTarget && <RestoreDialog application={restoreTarget} restoring={restoringId === restoreTarget.application_id} error={restoreError} onCancel={() => { if (!restoringId) { setRestoreTarget(null); setRestoreError(null) } }} onConfirm={() => restoreApplication(restoreTarget)} />}
     <Toast toast={toast} onDismiss={() => setToast(null)} />
   </div>
 }

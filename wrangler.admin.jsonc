@@ -26,6 +26,18 @@
     "ADMIN_EMAILS": "itszinniraahmad@gmail.com",
     "IMAGEKIT_URL_ENDPOINT": "https://ik.imagekit.io/4wqtbbxlw"
   },
+  "ratelimits": [
+    {
+      "name": "ADMIN_RATE_LIMITER",
+      "namespace_id": "31004",
+      "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      "name": "ADMIN_MUTATION_RATE_LIMITER",
+      "namespace_id": "31005",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

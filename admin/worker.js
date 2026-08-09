@@ -1,14 +1,33 @@
 import { requireAdmin } from './access.js'
 import ImageKit from '@imagekit/nodejs'
 import { apiJson } from '../src/apiResponse.js'
+import { logError, recordOperationalFailure } from './observability.js'
 
 const STATUSES = ['submitted', 'reviewing', 'shortlisted', 'contacted', 'rejected']
 const SOFT_DELETE_DAYS = 30
+const ADMIN_PAGE_SIZE = 50
+const MAX_ADMIN_PAGE = 10000
 const SORT_COLUMNS = {
   submitted_at: 'd.submitted_at',
   age: "CAST(json_extract(d.responses_json, '$.age') AS INTEGER)",
   location: 'a.current_location COLLATE NOCASE',
   status: 'd.application_status COLLATE NOCASE',
+}
+
+function clientIp(request) {
+  return request.headers.get('CF-Connecting-IP') || 'unknown'
+}
+
+async function enforceAdminRateLimit(request, env) {
+  const mutation = !['GET', 'HEAD', 'OPTIONS'].includes(request.method)
+  const limiter = mutation ? env.ADMIN_MUTATION_RATE_LIMITER : env.ADMIN_RATE_LIMITER
+  if (!limiter?.limit) return true
+  const result = await limiter.limit({ key: `${clientIp(request)}:${mutation ? 'mutation' : 'read'}` })
+  return result.success
+}
+
+async function recordAdminRateLimit(request, env) {
+  console.warn('security.admin_rate_limited', { method: request.method, path: new URL(request.url).pathname })
 }
 
 function parseResponses(value) {
@@ -82,11 +101,13 @@ async function sendShortlistedEmail(env, applicant) {
       }),
     })
   } catch (error) {
-    console.error('provider.resend_network_failed', { messageType: 'candidate_shortlisted', error, applicationId: applicant.application_id })
+    logError('provider.resend_network_failed', { messageType: 'candidate_shortlisted' }, error)
+    await recordOperationalFailure(env, { service: 'admin_api', eventName: 'provider.resend_network_failed', httpStatus: 502 })
     return { ok: false, code: 'EMAIL_ERROR', message: 'The shortlist email service could not be reached. The candidate status was not changed.' }
   }
   if (!response.ok) {
-    console.error('provider.resend_request_failed', { messageType: 'candidate_shortlisted', status: response.status, applicationId: applicant.application_id })
+    logError('provider.resend_request_failed', { messageType: 'candidate_shortlisted', httpStatus: response.status })
+    await recordOperationalFailure(env, { service: 'admin_api', eventName: 'provider.resend_request_failed', httpStatus: response.status })
     return { ok: false, code: 'EMAIL_ERROR', message: 'The shortlist email could not be sent. The candidate status was not changed.' }
   }
   const result = await response.json().catch(() => ({}))
@@ -98,15 +119,22 @@ function signPhotoUrls(env, photos) {
     throw new Error('Private image delivery is not configured for the admin Worker.')
   }
   const imagekit = new ImageKit({ privateKey: env.IMAGEKIT_PRIVATE_KEY })
-  return photos.map(({ file_url: fileUrl, ...photo }) => ({
-    ...photo,
-    file_url: imagekit.helper.buildSrc({
+  return photos.map(({ file_url: fileUrl, ...photo }) => {
+    const source = {
       urlEndpoint: env.IMAGEKIT_URL_ENDPOINT,
       src: fileUrl,
       signed: true,
       expiresIn: 300,
-    }),
-  }))
+    }
+    return {
+      ...photo,
+      file_url: imagekit.helper.buildSrc(source),
+      thumbnail_url: imagekit.helper.buildSrc({
+        ...source,
+        transformation: [{ width: 480, quality: 75, format: 'webp' }],
+      }),
+    }
+  })
 }
 
 async function deleteImageKitFiles(env, fileIds) {
@@ -122,8 +150,8 @@ async function deleteImageKitFiles(env, fileIds) {
   if (results.some((deleted) => !deleted)) throw new Error('One or more ImageKit files could not be deleted.')
 }
 
-async function handleApi(request, env, url) {
-  const auth = await requireAdmin(request, env)
+async function handleApi(request, env, url, authenticate = requireAdmin) {
+  const auth = await authenticate(request, env)
   if (auth.error) return auth.error
 
   if (url.pathname === '/api/admin/session' && request.method === 'GET') {
@@ -138,6 +166,9 @@ async function handleApi(request, env, url) {
     const deletedOnly = url.searchParams.get('deleted') === 'only'
     const sort = url.searchParams.get('sort')?.trim() || 'submitted_at'
     const direction = url.searchParams.get('direction') === 'asc' ? 'ASC' : 'DESC'
+    const requestedPage = Number.parseInt(url.searchParams.get('page') || '1', 10)
+    const page = Number.isInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, MAX_ADMIN_PAGE) : 1
+    const offset = (page - 1) * ADMIN_PAGE_SIZE
     const sortColumn = SORT_COLUMNS[sort] || SORT_COLUMNS.submitted_at
     const conditions = deletedOnly
       ? ['a.deleted_at IS NOT NULL']
@@ -178,7 +209,13 @@ async function handleApi(request, env, url) {
                a.deleted_at, a.delete_after, a.deleted_by, a.deletion_type,
                d.application_status, d.submitted_at, d.tags_json
       ORDER BY ${sortColumn} ${direction}, d.submitted_at DESC
-      LIMIT 500
+      LIMIT ? OFFSET ?
+    `
+    const countQuery = `
+      SELECT COUNT(*) AS total
+      FROM applicants a
+      LEFT JOIN applicant_details d ON d.application_id = a.application_id
+      ${where}
     `
     const summaryQuery = `
       SELECT
@@ -194,10 +231,13 @@ async function handleApi(request, env, url) {
       WHERE a.deleted_at IS NULL
         AND (d.application_status IS NULL OR d.application_status <> 'pending_upload')
     `
-    const [result, summary] = await Promise.all([
-      env.DB.prepare(query).bind(...bindings).all(),
+    const [result, filteredCount, summary] = await Promise.all([
+      env.DB.prepare(query).bind(...bindings, ADMIN_PAGE_SIZE, offset).all(),
+      env.DB.prepare(countQuery).bind(...bindings).first(),
       env.DB.prepare(summaryQuery).first(),
     ])
+    const filteredTotal = Number(filteredCount?.total || 0)
+    const totalPages = Math.max(1, Math.ceil(filteredTotal / ADMIN_PAGE_SIZE))
     return apiJson({
       applications: result.results.map(({ tags_json: tagsJson, ...application }) => ({ ...application, tags: parseTags(tagsJson) })),
       summary: {
@@ -208,6 +248,14 @@ async function handleApi(request, env, url) {
         shortlisted: Number(summary?.shortlisted || 0),
         rejected: Number(summary?.rejected || 0),
         retention_overdue: Number(summary?.retention_overdue || 0),
+      },
+      pagination: {
+        page,
+        page_size: ADMIN_PAGE_SIZE,
+        total: filteredTotal,
+        total_pages: totalPages,
+        has_previous: page > 1,
+        has_next: page < totalPages,
       },
     })
   }
@@ -287,7 +335,8 @@ async function handleApi(request, env, url) {
         })),
       } })
     } catch (error) {
-      console.error('provider.imagekit_signing_failed', { error, applicationId })
+      logError('provider.imagekit_signing_failed', {}, error)
+      await recordOperationalFailure(env, { service: 'imagekit', eventName: 'provider.imagekit_signing_failed', httpStatus: 502 })
       return apiJson({ error: 'Applicant photos could not be loaded from ImageKit.', code: 'IMAGEKIT_ERROR' }, { status: 502 })
     }
   }
@@ -398,7 +447,8 @@ async function handleApi(request, env, url) {
     try {
       await deleteImageKitFiles(env, photos.results.map((photo) => photo.file_id))
     } catch (error) {
-      console.error('provider.imagekit_deletion_failed', { error, applicationId })
+      logError('provider.imagekit_deletion_failed', {}, error)
+      await recordOperationalFailure(env, { service: 'imagekit', eventName: 'provider.imagekit_deletion_failed', httpStatus: 502 })
       return apiJson({ error: 'Photos could not be removed from ImageKit. Database records were kept; please retry.', code: 'IMAGEKIT_ERROR' }, { status: 502 })
     }
     await env.DB.batch([
@@ -462,9 +512,17 @@ export default {
     const url = new URL(request.url)
     if (url.pathname.startsWith('/api/admin/')) {
       try {
+        if (!await enforceAdminRateLimit(request, env)) {
+          await recordAdminRateLimit(request, env)
+          return apiJson({ error: 'Too many admin requests. Please wait and try again.', code: 'RATE_LIMITED' }, {
+            status: 429,
+            headers: { 'Retry-After': '60' },
+          })
+        }
         return await handleApi(request, env, url)
       } catch (error) {
-        console.error('admin.database_request_failed', { error, path: url.pathname })
+        logError('admin.database_request_failed', { path: url.pathname, httpStatus: 503 }, error)
+        await recordOperationalFailure(env, { service: 'admin_api', eventName: 'admin.database_request_failed', httpStatus: 503 })
         return apiJson({ error: 'The application database is temporarily unavailable.', code: 'DATABASE_ERROR' }, { status: 503 })
       }
     }
@@ -472,4 +530,4 @@ export default {
   },
 }
 
-export { buildShortlistedEmail, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded }
+export { ADMIN_PAGE_SIZE, buildShortlistedEmail, enforceAdminRateLimit, handleApi, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded, signPhotoUrls }
