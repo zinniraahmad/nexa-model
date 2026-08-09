@@ -3,6 +3,7 @@ import ImageKit from '@imagekit/nodejs'
 import { apiJson } from '../src/apiResponse.js'
 
 const STATUSES = ['submitted', 'reviewing', 'shortlisted', 'contacted', 'rejected']
+const SOFT_DELETE_DAYS = 30
 const SORT_COLUMNS = {
   submitted_at: 'd.submitted_at',
   age: "CAST(json_extract(d.responses_json, '$.age') AS INTEGER)",
@@ -34,6 +35,17 @@ function parseTags(value) {
   } catch {
     return []
   }
+}
+
+function matchesDeletionConfirmation(confirmation, applicant) {
+  const normalized = String(confirmation || '').trim().toLocaleLowerCase()
+  return normalized === String(applicant?.full_name || '').trim().toLocaleLowerCase()
+    || normalized === String(applicant?.application_id || '').toLocaleLowerCase()
+}
+
+function recoveryPeriodEnded(deleteAfter, now = Date.now()) {
+  const deadline = new Date(deleteAfter).getTime()
+  return Number.isFinite(deadline) && deadline <= now
 }
 
 function escapeHtml(value) {
@@ -123,11 +135,13 @@ async function handleApi(request, env, url) {
     const status = url.searchParams.get('status')?.trim() || ''
     const dateFrom = url.searchParams.get('date_from')?.trim() || ''
     const dateTo = url.searchParams.get('date_to')?.trim() || ''
-    const retention = url.searchParams.get('retention')?.trim() || ''
+    const deletedOnly = url.searchParams.get('deleted') === 'only'
     const sort = url.searchParams.get('sort')?.trim() || 'submitted_at'
     const direction = url.searchParams.get('direction') === 'asc' ? 'ASC' : 'DESC'
     const sortColumn = SORT_COLUMNS[sort] || SORT_COLUMNS.submitted_at
-    const conditions = ["(d.application_status IS NULL OR d.application_status <> 'pending_upload')"]
+    const conditions = deletedOnly
+      ? ['a.deleted_at IS NOT NULL']
+      : ['a.deleted_at IS NULL', "(d.application_status IS NULL OR d.application_status <> 'pending_upload')"]
     const bindings = []
     if (search) {
       conditions.push('(a.full_name LIKE ? OR a.email LIKE ? OR a.phone LIKE ? OR a.application_id LIKE ? OR d.tags_json LIKE ?)')
@@ -146,11 +160,10 @@ async function handleApi(request, env, url) {
       conditions.push("date(d.submitted_at, '+8 hours') <= ?")
       bindings.push(dateTo)
     }
-    if (retention === 'warning') conditions.push("datetime(d.submitted_at, '+6 months') <= datetime('now', '+30 days')")
-    if (retention === 'overdue') conditions.push("datetime(d.submitted_at, '+6 months') <= CURRENT_TIMESTAMP")
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
     const query = `
       SELECT a.application_id, a.full_name, a.email, a.phone, a.current_location,
+             a.deleted_at, a.delete_after, a.deleted_by, a.deletion_type,
              CAST(json_extract(d.responses_json, '$.age') AS INTEGER) AS age,
              COALESCE(d.application_status, 'orphaned') AS application_status, d.submitted_at, d.tags_json,
              datetime(d.submitted_at, '+6 months') AS retention_due_at,
@@ -162,6 +175,7 @@ async function handleApi(request, env, url) {
       LEFT JOIN applicant_photos p ON p.application_id = a.application_id
       ${where}
       GROUP BY a.application_id, a.full_name, a.email, a.phone, a.current_location,
+               a.deleted_at, a.delete_after, a.deleted_by, a.deletion_type,
                d.application_status, d.submitted_at, d.tags_json
       ORDER BY ${sortColumn} ${direction}, d.submitted_at DESC
       LIMIT 500
@@ -177,7 +191,8 @@ async function handleApi(request, env, url) {
         SUM(CASE WHEN datetime(submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END) AS retention_overdue
       FROM applicants a
       LEFT JOIN applicant_details d ON d.application_id = a.application_id
-      WHERE d.application_status IS NULL OR d.application_status <> 'pending_upload'
+      WHERE a.deleted_at IS NULL
+        AND (d.application_status IS NULL OR d.application_status <> 'pending_upload')
     `
     const [result, summary] = await Promise.all([
       env.DB.prepare(query).bind(...bindings).all(),
@@ -218,11 +233,13 @@ async function handleApi(request, env, url) {
                tags_json, tags_json, ?, ?
         FROM applicant_details
         WHERE application_id IN (${placeholders}) AND application_status <> ?
+          AND application_id IN (SELECT application_id FROM applicants WHERE deleted_at IS NULL)
       `).bind(status, changedAt, auth.email, ...applicationIds, status),
       env.DB.prepare(`
         UPDATE applicant_details
         SET application_status = ?, reviewed_at = ?, reviewed_by = ?
         WHERE application_id IN (${placeholders})
+          AND application_id IN (SELECT application_id FROM applicants WHERE deleted_at IS NULL)
       `).bind(status, changedAt, auth.email, ...applicationIds),
     ])
     return apiJson({ success: true, updated: Number(result.meta.changes || 0) })
@@ -239,7 +256,7 @@ async function handleApi(request, env, url) {
              CASE WHEN datetime(d.submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS retention_overdue
       FROM applicants a
       JOIN applicant_details d ON d.application_id = a.application_id
-      WHERE a.application_id = ?
+      WHERE a.application_id = ? AND a.deleted_at IS NULL
     `).bind(applicationId).first()
     if (!application) return apiJson({ error: 'Application not found.' }, { status: 404 })
 
@@ -291,7 +308,7 @@ async function handleApi(request, env, url) {
              a.application_id, a.full_name, a.email
       FROM applicant_details d
       JOIN applicants a ON a.application_id = d.application_id
-      WHERE d.application_id = ?
+      WHERE d.application_id = ? AND a.deleted_at IS NULL
     `).bind(applicationId).first()
     if (!existing) return apiJson({ error: 'Application not found.' }, { status: 404 })
 
@@ -336,13 +353,46 @@ async function handleApi(request, env, url) {
     }, shortlisted_email_sent_at: shortlistEmailSentAt || existing.shortlisted_email_sent_at || null })
   }
 
-  if (match && request.method === 'DELETE') {
-    const applicationId = decodeURIComponent(match[1])
-    const existing = await env.DB.prepare('SELECT application_id FROM applicants WHERE application_id = ?')
-      .bind(applicationId)
-      .first()
-    if (!existing) return apiJson({ error: 'Application not found.' }, { status: 404 })
+  const restoreMatch = url.pathname.match(/^\/api\/admin\/applications\/([^/]+)\/restore$/)
+  if (restoreMatch && request.method === 'POST') {
+    const applicationId = decodeURIComponent(restoreMatch[1])
+    const existing = await env.DB.prepare(`
+      SELECT application_id, full_name, deletion_type
+      FROM applicants
+      WHERE application_id = ? AND deleted_at IS NOT NULL
+    `).bind(applicationId).first()
+    if (!existing) return apiJson({ error: 'Deleted application not found.', code: 'NOT_FOUND' }, { status: 404 })
+    const [, result] = await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO application_deletion_audit (
+          application_id, applicant_name, event_type, deletion_type, occurred_at, performed_by
+        ) VALUES (?, ?, 'restored', ?, CURRENT_TIMESTAMP, ?)
+      `).bind(existing.application_id, existing.full_name, existing.deletion_type, auth.email),
+      env.DB.prepare(`
+        UPDATE applicants
+        SET deleted_at = NULL, delete_after = NULL, deleted_by = NULL, deletion_type = NULL
+        WHERE application_id = ? AND deleted_at IS NOT NULL
+      `).bind(applicationId),
+    ])
+    if (!result.meta.changes) return apiJson({ error: 'Deleted application not found.', code: 'NOT_FOUND' }, { status: 404 })
+    return apiJson({ success: true })
+  }
 
+  const purgeMatch = url.pathname.match(/^\/api\/admin\/applications\/([^/]+)\/purge$/)
+  if (purgeMatch && request.method === 'DELETE') {
+    const applicationId = decodeURIComponent(purgeMatch[1])
+    const body = await request.json().catch(() => null)
+    const confirmation = String(body?.confirmation || '')
+    const existing = await env.DB.prepare(`
+      SELECT application_id, full_name, deletion_type, delete_after
+      FROM applicants
+      WHERE application_id = ? AND deleted_at IS NOT NULL
+    `).bind(applicationId).first()
+    if (!existing) return apiJson({ error: 'Deleted application not found.', code: 'NOT_FOUND' }, { status: 404 })
+    if (!matchesDeletionConfirmation(confirmation, existing)) return apiJson({ error: 'Type the applicant name or reference exactly.', code: 'CONFIRMATION_MISMATCH' }, { status: 400 })
+    if (!recoveryPeriodEnded(existing.delete_after)) {
+      return apiJson({ error: 'The 30-day recovery period has not ended.', code: 'RECOVERY_PERIOD_ACTIVE' }, { status: 400 })
+    }
     const photos = await env.DB.prepare('SELECT file_id FROM applicant_photos WHERE application_id = ?')
       .bind(applicationId).all()
     try {
@@ -352,11 +402,56 @@ async function handleApi(request, env, url) {
       return apiJson({ error: 'Photos could not be removed from ImageKit. Database records were kept; please retry.', code: 'IMAGEKIT_ERROR' }, { status: 502 })
     }
     await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO application_deletion_audit (
+          application_id, applicant_name, event_type, deletion_type, occurred_at, performed_by
+        ) VALUES (?, ?, 'permanently_deleted', ?, CURRENT_TIMESTAMP, ?)
+      `).bind(existing.application_id, existing.full_name, existing.deletion_type, auth.email),
       env.DB.prepare('DELETE FROM applicant_photos WHERE application_id = ?').bind(applicationId),
       env.DB.prepare('DELETE FROM applicant_details WHERE application_id = ?').bind(applicationId),
-      env.DB.prepare('DELETE FROM applicants WHERE application_id = ?').bind(applicationId),
+      env.DB.prepare('DELETE FROM applicants WHERE application_id = ? AND deleted_at IS NOT NULL').bind(applicationId),
     ])
     return apiJson({ success: true })
+  }
+
+  if (match && request.method === 'DELETE') {
+    const applicationId = decodeURIComponent(match[1])
+    const body = await request.json().catch(() => null)
+    const confirmation = String(body?.confirmation || '').trim()
+    const deletionType = String(body?.deletion_type || '')
+    const existing = await env.DB.prepare(`
+      SELECT a.application_id, a.full_name, a.deleted_at,
+             CASE WHEN datetime(d.submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS retention_overdue
+      FROM applicants a
+      LEFT JOIN applicant_details d ON d.application_id = a.application_id
+      WHERE a.application_id = ?
+    `)
+      .bind(applicationId)
+      .first()
+    if (!existing) return apiJson({ error: 'Application not found.' }, { status: 404 })
+    if (existing.deleted_at) return apiJson({ error: 'Application is already in Recently Deleted.', code: 'ALREADY_DELETED' }, { status: 409 })
+    if (!matchesDeletionConfirmation(confirmation, existing) || !['manual', 'retention_cleanup'].includes(deletionType)) {
+      return apiJson({ error: 'Type the applicant name or reference exactly and choose a valid deletion action.', code: 'CONFIRMATION_MISMATCH' }, { status: 400 })
+    }
+    if (deletionType === 'retention_cleanup' && !existing.retention_overdue) {
+      return apiJson({ error: 'This application has not reached its retention cleanup date.', code: 'RETENTION_NOT_DUE' }, { status: 400 })
+    }
+    const deletedAt = new Date().toISOString()
+    const deleteAfter = new Date(Date.now() + SOFT_DELETE_DAYS * 24 * 60 * 60 * 1000).toISOString()
+    const [, result] = await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO application_deletion_audit (
+          application_id, applicant_name, event_type, deletion_type, occurred_at, performed_by
+        ) VALUES (?, ?, 'soft_deleted', ?, ?, ?)
+      `).bind(existing.application_id, existing.full_name, deletionType, deletedAt, auth.email),
+      env.DB.prepare(`
+        UPDATE applicants
+        SET deleted_at = ?, delete_after = ?, deleted_by = ?, deletion_type = ?
+        WHERE application_id = ? AND deleted_at IS NULL
+      `).bind(deletedAt, deleteAfter, auth.email, deletionType, applicationId),
+    ])
+    if (!result.meta.changes) return apiJson({ error: 'Application is already in Recently Deleted.', code: 'ALREADY_DELETED' }, { status: 409 })
+    return apiJson({ success: true, delete_after: deleteAfter })
   }
 
   return apiJson({ error: 'Not found.' }, { status: 404 })
@@ -377,4 +472,4 @@ export default {
   },
 }
 
-export { buildShortlistedEmail, normalizeTags, parseResponses }
+export { buildShortlistedEmail, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded }

@@ -5,7 +5,7 @@ import { applicationSections, declarationFields, photoFields } from '../src/appl
 import { detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
 import { API_SECURITY_HEADERS, apiJson } from '../src/apiResponse.js'
 import { requireAdmin } from '../admin/access.js'
-import { buildShortlistedEmail, normalizeTags, parseResponses } from '../admin/worker.js'
+import { buildShortlistedEmail, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded } from '../admin/worker.js'
 
 function validValue(field) {
   if (field.type === 'checkbox') return [field.options[0]]
@@ -36,6 +36,8 @@ test('validates marital status and normalizes legacy admin records', () => {
   const answers = validAnswers()
   answers.marital_status = 'Married'
   assert.equal(validateAnswers(answers), null)
+  delete answers.marital_status
+  assert.match(validateAnswers(answers), /Marital Status is required/i)
   answers.marital_status = 'Unknown'
   assert.match(validateAnswers(answers), /invalid selection/i)
 
@@ -264,6 +266,9 @@ test('admin workflow validates tags and uses Malaysia time for dates and filters
   assert.match(app, /Asia\/Kuala_Lumpur/)
   assert.match(app, /Export CSV/)
   assert.match(app, /Unsaved changes/)
+  assert.match(app, /summary-count-skeleton/)
+  assert.doesNotMatch(app, /AnimatedCount|requestAnimationFrame/)
+  assert.doesNotMatch(app, /<label>Retention/)
 })
 
 test('admin workflow exposes only the active recruitment statuses', () => {
@@ -292,6 +297,31 @@ test('admin detail review includes history, completeness and accessible photo co
   assert.match(app, /Missing required/)
   assert.match(app, /Photo viewer/)
   assert.match(app, /Copy reference ID/)
+  assert.match(app, /Loading applicant details/)
+})
+
+test('admin deletion uses typed confirmation, a 30-day recovery window and durable audit events', () => {
+  const worker = readFileSync(new URL('../admin/worker.js', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('../admin/src/App.jsx', import.meta.url), 'utf8')
+  const migration = readFileSync(new URL('../migrations/0015_safe_application_deletion.sql', import.meta.url), 'utf8')
+
+  assert.match(migration, /application_deletion_audit/)
+  assert.match(migration, /soft_deleted.*restored.*permanently_deleted/)
+  assert.match(worker, /SOFT_DELETE_DAYS = 30/)
+  assert.match(worker, /CONFIRMATION_MISMATCH/)
+  assert.match(worker, /RECOVERY_PERIOD_ACTIVE/)
+  assert.match(worker, /event_type, deletion_type/)
+  assert.match(app, /Type the applicant’s full name or reference ID/)
+  assert.match(app, /Recently Deleted/)
+  assert.match(app, /Retention cleanup/)
+  assert.match(app, /Permanently delete/)
+
+  const applicant = { application_id: 'reference-123', full_name: 'Candidate Name' }
+  assert.equal(matchesDeletionConfirmation(' Candidate Name ', applicant), true)
+  assert.equal(matchesDeletionConfirmation('REFERENCE-123', applicant), true)
+  assert.equal(matchesDeletionConfirmation('Candidate', applicant), false)
+  assert.equal(recoveryPeriodEnded('2026-08-01T00:00:00.000Z', Date.parse('2026-08-02T00:00:00.000Z')), true)
+  assert.equal(recoveryPeriodEnded('invalid', Date.now()), false)
 })
 
 test('shortlisting requires confirmation and creates a bilingual candidate email', () => {
