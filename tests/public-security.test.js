@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { applicationSections, declarationFields, photoFields } from '../src/applicationForm.js'
-import { detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
+import { detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleRecoverApplication, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
 import { API_SECURITY_HEADERS, apiJson } from '../src/apiResponse.js'
 import { requireAdmin } from '../admin/access.js'
 import { buildShortlistedEmail, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded } from '../admin/worker.js'
@@ -83,6 +83,15 @@ test('detects PNG and JPEG signatures instead of trusting filenames', async () =
   assert.equal(await detectImageMime(png), 'image/png')
   assert.equal(await detectImageMime(jpeg), 'image/jpeg')
   assert.equal(await detectImageMime(executable), null)
+})
+
+test('mobile photo picker supports adding photos one at a time', () => {
+  const application = readFileSync(new URL('../src/pages/TalentApplication.jsx', import.meta.url), 'utf8')
+  assert.match(application, /const combinedFiles = \[\.\.\.existingFiles, \.\.\.files\]/)
+  assert.match(application, /tap to add more/)
+  assert.match(application, /accept="image\/jpeg,image\/png"/)
+  assert.match(application, /Clear selected photos/)
+  assert.doesNotMatch(application, /click to replace/)
 })
 
 function accessDatabase(existing) {
@@ -229,6 +238,47 @@ test('valid recovery token replaces only the unfinished application', async (con
   assert.equal(response.status, 201)
   assert.equal(body.application_id, 'pending-1')
   assert.ok(executedSql.some((sql) => sql.includes('recovery_token_hash = ?')))
+})
+
+test('secure recovery resumes saved answers and uploaded photo slots', async () => {
+  const recoveryToken = 'valid-recovery-token'
+  const tokenHashBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(recoveryToken))
+  const recoveryTokenHash = Array.from(new Uint8Array(tokenHashBytes), (byte) => byte.toString(16).padStart(2, '0')).join('')
+  const savedAnswers = validAnswers()
+  const uploadedTypes = ['front_facing_1', 'side_profile_1', 'side_profile_2', 'side_profile_3']
+  const env = {
+    DB: {
+      prepare(sql) {
+        return {
+          bind() {
+            return {
+              async first() {
+                if (sql.includes('d.recovery_token_hash')) return {
+                  application_id: 'pending-1',
+                  email: 'candidate@example.com',
+                  responses_json: JSON.stringify(savedAnswers),
+                  recovery_token_hash: recoveryTokenHash,
+                  upload_token_expires_at: '2026-08-09 12:00:00',
+                }
+                return null
+              },
+              async run() { return { meta: { changes: 1 } } },
+              async all() { return { results: uploadedTypes.map((photo_type) => ({ photo_type })) } },
+            }
+          },
+        }
+      },
+    },
+  }
+  const response = await handleRecoverApplication(new Request('https://nexa-model.com/api/recover', {
+    method: 'POST', headers: { Authorization: `Bearer ${recoveryToken}` },
+  }), env)
+  const body = await response.json()
+  assert.equal(response.status, 200)
+  assert.equal(body.application_id, 'pending-1')
+  assert.deepEqual(body.answers, savedAnswers)
+  assert.deepEqual(body.uploaded_types, uploadedTypes)
+  assert.notEqual(body.upload_token, recoveryToken)
 })
 
 test('requires a separate final Turnstile token before creating an application', async () => {

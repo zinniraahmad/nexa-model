@@ -92,6 +92,24 @@ function FileThumbnail({ file }) {
   return url ? <img src={url} alt={file.name} onError={() => setPreviewFailed(true)} /> : null
 }
 
+function PhotoPicker({ field, files = [], uploadedCount = 0, onSelect, onClear }) {
+  const readyCount = uploadedCount + files.length
+  const countLabel = readyCount
+    ? `${readyCount}/${field.max} ready${uploadedCount ? ` · ${uploadedCount} already uploaded` : ''} — tap to add more`
+    : field.min === field.max ? `${field.min} photo(s) required` : `${field.min}–${field.max} photo(s)`
+  return <div className="photo-field-item">
+    <label className="upload-zone compact-upload">
+      <ImagePlus size={25} />
+      <strong>{field.label}{field.required && <b className="required-mark"> *</b>}</strong>
+      <em className="bm-text">{field.labelBm}</em>
+      <span>{countLabel}</span>
+      {files.length > 0 && <div className="photo-preview-grid">{files.map((file) => <FileThumbnail key={`${file.name}-${file.size}-${file.lastModified}`} file={file} />)}</div>}
+      <input type="file" accept="image/jpeg,image/png" multiple={field.max > 1} onChange={(event) => onSelect(field, event)} />
+    </label>
+    {files.length > 0 && <button className="clear-photo-selection" type="button" onClick={() => onClear(field.key)}>Clear selected photos</button>}
+  </div>
+}
+
 function TurnstileWidget({ onToken, resetKey }) {
   const containerRef = useRef(null)
   const widgetIdRef = useRef()
@@ -243,6 +261,7 @@ export default function TalentApplication() {
   const [introductionAccepted, setIntroductionAccepted] = useState(false)
   const [answers, setAnswers] = useState({})
   const [photos, setPhotos] = useState({})
+  const [existingPhotoTypes, setExistingPhotoTypes] = useState([])
   const [applicationId, setApplicationId] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [uploadProgress, setUploadProgress] = useState({})
@@ -255,6 +274,7 @@ export default function TalentApplication() {
   const [uploadToken, setUploadToken] = useState('')
   const [emailAccessToken, setEmailAccessToken] = useState('')
   const [recoveryToken, setRecoveryToken] = useState(recoveryTokenFromUrl)
+  const recoveryAttemptedRef = useRef(false)
 
   const photoStep = applicationSections.length + 1
   const declarationStep = photoStep + 1
@@ -272,10 +292,43 @@ export default function TalentApplication() {
   }, [visualIndex])
 
   useEffect(() => {
-    if (!recoveryToken) return
+    if (recoveryAttemptedRef.current) return
+    const pendingSession = readPendingUploadSession()
+    const credential = recoveryToken || pendingSession?.uploadToken
+    if (!credential) return
+    recoveryAttemptedRef.current = true
     const url = new URL(window.location.href)
     url.searchParams.delete('recovery')
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+    let cancelled = false
+    setSubmitting(true)
+    setMessage('Recovering your saved application...')
+    fetch('/api/recover', { method: 'POST', headers: { Authorization: `Bearer ${credential}` } })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to recover the saved application.')
+        return data
+      })
+      .then((data) => {
+        if (cancelled) return
+        setAnswers(data.answers || {})
+        setApplicationId(data.application_id)
+        setUploadToken(data.upload_token)
+        setExistingPhotoTypes(Array.isArray(data.uploaded_types) ? data.uploaded_types : [])
+        setRecoveryToken('')
+        writePendingUploadSession(data.email, data.application_id, data.upload_token)
+        setStep(photoStep)
+        setMessage('Your saved answers and uploaded photos were recovered. Add only the missing photos below. / Jawapan dan gambar terdahulu telah dipulihkan. Tambah gambar yang masih belum lengkap sahaja.')
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      })
+      .catch((error) => {
+        if (cancelled) return
+        if (pendingSession && !recoveryToken) clearPendingUploadSession()
+        setRecoveryToken('')
+        setMessage(error.message || 'Unable to recover the saved application.')
+      })
+      .finally(() => { if (!cancelled) setSubmitting(false) })
+    return () => { cancelled = true }
   }, [recoveryToken])
 
   function moveTo(nextStep) {
@@ -345,19 +398,22 @@ export default function TalentApplication() {
 
   function selectPhotos(field, event) {
     const files = Array.from(event.target.files || [])
-    if (files.length > field.max) {
+    const existingFiles = photos[field.key] || []
+    const combinedFiles = [...existingFiles, ...files]
+    const uploadedCount = existingPhotoTypes.filter((type) => type.startsWith(`${field.key}_`)).length
+    if (uploadedCount + combinedFiles.length > field.max) {
       setMessage(`Please select no more than ${field.max} file(s) for ${field.label}.`)
       event.target.value = ''
       return
     }
-    const normalizedNames = files.map((file) => file.name.trim().toLowerCase())
-    const duplicateInSelection = normalizedNames.find((name, index) => normalizedNames.indexOf(name) !== index)
-    const namesInOtherCategories = new Set(Object.entries(photos).filter(([key]) => key !== field.key).flatMap(([, selectedFiles]) => selectedFiles.map((file) => file.name.trim().toLowerCase())))
-    const duplicateAcrossCategories = normalizedNames.find((name) => namesInOtherCategories.has(name))
-    const duplicateName = duplicateInSelection || duplicateAcrossCategories
-    if (duplicateName) {
-      const originalName = files.find((file) => file.name.trim().toLowerCase() === duplicateName)?.name || duplicateName
-      setMessage(`${originalName} has already been selected. Please upload a different image with a unique filename.`)
+    const fingerprint = (file) => `${file.name.trim().toLowerCase()}:${file.size}:${file.lastModified}`
+    const combinedFingerprints = combinedFiles.map(fingerprint)
+    const duplicateInCategory = combinedFingerprints.find((value, index) => combinedFingerprints.indexOf(value) !== index)
+    const fingerprintsInOtherCategories = new Set(Object.entries(photos).filter(([key]) => key !== field.key).flatMap(([, selectedFiles]) => selectedFiles.map(fingerprint)))
+    const duplicateAcrossCategories = combinedFiles.find((file) => fingerprintsInOtherCategories.has(fingerprint(file)))
+    if (duplicateInCategory || duplicateAcrossCategories) {
+      const duplicateFile = duplicateAcrossCategories || combinedFiles.find((file) => fingerprint(file) === duplicateInCategory)
+      setMessage(`${duplicateFile?.name || 'This image'} has already been selected. Please choose a different image.`)
       event.target.value = ''
       return
     }
@@ -367,12 +423,21 @@ export default function TalentApplication() {
       event.target.value = ''
       return
     }
-    setPhotos((current) => ({ ...current, [field.key]: files }))
+    setPhotos((current) => ({ ...current, [field.key]: combinedFiles }))
+    event.target.value = ''
+    setMessage('')
+  }
+
+  function clearPhotos(fieldKey) {
+    setPhotos((current) => ({ ...current, [fieldKey]: [] }))
     setMessage('')
   }
 
   function continueFromPhotos() {
-    const missing = photoFields.find((field) => field.required && (photos[field.key]?.length || 0) < field.min)
+    const missing = photoFields.find((field) => {
+      const uploadedCount = existingPhotoTypes.filter((type) => type.startsWith(`${field.key}_`)).length
+      return field.required && uploadedCount + (photos[field.key]?.length || 0) < field.min
+    })
     if (missing) return setMessage(`${missing.label} requires at least ${missing.min} photo(s).`)
     moveTo(declarationStep)
   }
@@ -436,7 +501,11 @@ export default function TalentApplication() {
 
       const initialProgress = Object.fromEntries(photoFields.filter((field) => photos[field.key]?.length).map((field) => [field.key, { label: field.label, uploaded: 0, total: photos[field.key].length, status: 'waiting' }]))
       setUploadProgress(initialProgress)
-      const uploads = photoFields.flatMap((field) => (photos[field.key] || []).map((file, index) => ({ file, fieldKey: field.key, type: `${field.key}_${index + 1}` })))
+      const occupiedTypes = new Set(existingPhotoTypes)
+      const uploads = photoFields.flatMap((field) => {
+        const availableTypes = Array.from({ length: field.max }, (_, index) => `${field.key}_${index + 1}`).filter((type) => !occupiedTypes.has(type))
+        return (photos[field.key] || []).map((file, index) => ({ file, fieldKey: field.key, type: availableTypes[index] }))
+      })
       for (let index = 0; index < uploads.length; index += 1) {
         const currentUpload = uploads[index]
         setUploadProgress((current) => ({ ...current, [currentUpload.fieldKey]: { ...current[currentUpload.fieldKey], status: 'uploading' } }))
@@ -504,7 +573,7 @@ export default function TalentApplication() {
       {!alreadySubmitted && step === 0 && <Introduction accepted={introductionAccepted} setAccepted={setIntroductionAccepted} onContinue={() => moveTo(1)} />}
       {!alreadySubmitted && step >= 1 && step <= applicationSections.length && <FormSection section={applicationSections[step - 1]} answers={answers} setAnswer={setAnswer} onBack={() => moveTo(step - 1)} onNext={continueSection} submitting={step === 1 && submitting} nextLabel="Continue">{step === 1 && !applicationCredential() && <TurnstileWidget onToken={setTurnstileToken} resetKey={turnstileResetKey} />}</FormSection>}
 
-      {step === photoStep && <section className="photo-step expanded-form"><header className="form-section-heading"><p className="section-label">SECTION 10</p><h2>Photo Submission</h2><em className="section-title-bm">Penghantaran Gambar</em><p>Select one or multiple recent, clear and unfiltered PNG, JPG or JPEG images. Maximum 10 MB each.</p><p className="bm-text">Pilih satu atau beberapa gambar PNG, JPG atau JPEG yang terkini, jelas dan tanpa filter. Maksimum 10 MB setiap gambar.</p></header><div className="photo-field-list">{photoFields.map((field) => <label className="upload-zone compact-upload" key={field.key}><ImagePlus size={25} /><strong>{field.label}{field.required && <b className="required-mark"> *</b>}</strong><em className="bm-text">{field.labelBm}</em><span>{photos[field.key]?.length ? `${photos[field.key].length} selected — click to replace` : field.min === field.max ? `${field.min} file(s)` : `${field.min}–${field.max} file(s)`}</span>{photos[field.key]?.length > 0 && <div className="photo-preview-grid">{photos[field.key].map((file) => <FileThumbnail key={`${file.name}-${file.lastModified}`} file={file} />)}</div>}<input type="file" accept=".png,.jpg,.jpeg" multiple={field.max > 1} onChange={(event) => selectPhotos(field, event)} /></label>)}</div><div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(step - 1)}>Back</button><button className="button button-dark" type="button" onClick={continueFromPhotos}>Continue <ArrowRight size={17} /></button></div></section>}
+      {step === photoStep && <section className="photo-step expanded-form"><header className="form-section-heading"><p className="section-label">SECTION 10</p><h2>Photo Submission</h2><em className="section-title-bm">Penghantaran Gambar</em><p>On a phone, you may select all required photos together or add them one at a time. PNG, JPG and JPEG only. Maximum 10 MB each.</p><p className="bm-text">Di telefon, anda boleh memilih semua gambar yang diperlukan serentak atau menambahnya satu demi satu. PNG, JPG dan JPEG sahaja. Maksimum 10 MB setiap gambar.</p></header><div className="photo-field-list">{photoFields.map((field) => <PhotoPicker key={field.key} field={field} files={photos[field.key]} uploadedCount={existingPhotoTypes.filter((type) => type.startsWith(`${field.key}_`)).length} onSelect={selectPhotos} onClear={clearPhotos} />)}</div><div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(step - 1)}>Back</button><button className="button button-dark" type="button" onClick={continueFromPhotos}>Continue <ArrowRight size={17} /></button></div></section>}
 
       {step === declarationStep && <form className="application-form expanded-form" onSubmit={submitApplication}><header className="form-section-heading"><p className="section-label">SECTION 11</p><h2>Final Declaration</h2><em className="section-title-bm">Pengisytiharan Akhir</em><p>Review your information carefully before submitting.</p><p className="bm-text">Semak maklumat anda dengan teliti sebelum menghantar.</p><p className="privacy-form-link">Please review the <Link to="/privacy" target="_blank" rel="noreferrer">Privacy Notice / Notis Privasi</Link> before confirming.</p></header><div className="form-fields">{declarationFields.map((field) => <Field key={field.key} field={field} value={answers[field.key]} onChange={(value) => setAnswer(field.key, value)} />)}</div>{!applicationId && <div className="final-security-check"><h3>Final security verification <em>Pengesahan keselamatan akhir</em></h3><p>Complete this check before submitting your application.</p><p className="bm-text">Lengkapkan semakan ini sebelum menghantar permohonan anda.</p><TurnstileWidget onToken={setSubmitTurnstileToken} resetKey={submitTurnstileResetKey} /></div>}{Object.keys(uploadProgress).length > 0 && <div className="upload-progress-panel"><h3>Photo upload status <em>Status muat naik gambar</em></h3>{Object.entries(uploadProgress).map(([key, item]) => <div className={`upload-progress-row ${item.status}`} key={key}><div><span>{item.label}</span><b>{item.status === 'failed' ? 'Failed — retry submission' : `${item.uploaded}/${item.total} · ${item.status}`}</b></div><progress max={item.total} value={item.uploaded} /></div>)}</div>}<div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(photoStep)} disabled={submitting}>Back</button><button className="button button-dark" disabled={submitting}>{submitting ? <><LoaderCircle className="spin" size={17} /> Submitting</> : <>Submit application <ArrowRight size={17} /></>}</button></div></form>}
 

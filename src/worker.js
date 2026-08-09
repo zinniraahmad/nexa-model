@@ -321,8 +321,8 @@ async function ensurePendingRecoveryEmail(request, env, applicant) {
         to: [applicant.email],
         reply_to: replyTo,
         subject: 'Continue your unfinished Nexa Model application',
-        text: `Hi ${applicant.full_name},\n\nYour previous Nexa Model photo upload did not finish. Use this secure single-use link within 60 minutes to restart and replace the unfinished application:\n\n${recoveryUrl}\n\nIf you did not request this, ignore this email.\n\nMuat naik gambar permohonan Nexa Model anda sebelum ini belum selesai. Gunakan pautan selamat sekali guna ini dalam masa 60 minit untuk memulakan semula dan menggantikan permohonan yang belum lengkap. Jika anda tidak membuat permintaan ini, abaikan e-mel ini.\n\nPrivacy enquiries / Pertanyaan privasi: ${replyTo}`,
-        html: `<p>Hi ${escapeHtml(applicant.full_name)},</p><p>Your previous Nexa Model photo upload did not finish.</p><p><a href="${escapeHtml(recoveryUrl.toString())}">Restart your unfinished application</a></p><p>This secure single-use link expires in 60 minutes. If you did not request this, ignore this email.</p><hr><p>Muat naik gambar permohonan Nexa Model anda sebelum ini belum selesai.</p><p><a href="${escapeHtml(recoveryUrl.toString())}">Mulakan semula permohonan yang belum lengkap</a></p><p>Pautan selamat sekali guna ini tamat tempoh dalam masa 60 minit. Jika anda tidak membuat permintaan ini, abaikan e-mel ini.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
+        text: `Hi ${applicant.full_name},\n\nYour previous Nexa Model photo upload did not finish. Your saved answers and uploaded photos are still available. Use this secure single-use link within 60 minutes to continue with only the missing photos:\n\n${recoveryUrl}\n\nIf you did not request this, ignore this email.\n\nMuat naik gambar permohonan Nexa Model anda sebelum ini belum selesai. Jawapan dan gambar yang telah dimuat naik masih disimpan. Gunakan pautan selamat sekali guna ini dalam masa 60 minit untuk meneruskan dengan gambar yang masih belum lengkap sahaja. Jika anda tidak membuat permintaan ini, abaikan e-mel ini.\n\nPrivacy enquiries / Pertanyaan privasi: ${replyTo}`,
+        html: `<p>Hi ${escapeHtml(applicant.full_name)},</p><p>Your previous Nexa Model photo upload did not finish. Your saved answers and uploaded photos are still available.</p><p><a href="${escapeHtml(recoveryUrl.toString())}">Continue with the missing photos</a></p><p>This secure single-use link expires in 60 minutes. If you did not request this, ignore this email.</p><hr><p>Muat naik gambar permohonan Nexa Model anda sebelum ini belum selesai. Jawapan dan gambar yang telah dimuat naik masih disimpan.</p><p><a href="${escapeHtml(recoveryUrl.toString())}">Teruskan dengan gambar yang belum lengkap</a></p><p>Pautan selamat sekali guna ini tamat tempoh dalam masa 60 minit. Jika anda tidak membuat permintaan ini, abaikan e-mel ini.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
       }),
     })
     if (response.ok) return true
@@ -336,6 +336,63 @@ async function ensurePendingRecoveryEmail(request, env, applicant) {
     WHERE application_id = ? AND recovery_token_hash = ?
   `).bind(applicant.application_id, recoveryTokenHash).run().catch(() => {})
   return false
+}
+
+async function handleRecoverApplication(request, env) {
+  if (!await enforceRateLimit(env.APPLY_RATE_LIMITER, `${clientIp(request)}:recover`)) return rateLimited('recover')
+  try {
+    const token = bearerToken(request)
+    if (!token || token.length > 200) return json({ success: false, error: 'Recovery link is invalid or expired.' }, { status: 403 })
+    const tokenHash = await sha256(token)
+    const applicant = await env.DB.prepare(`
+      SELECT a.application_id, a.email, d.responses_json, d.recovery_token_hash,
+             d.upload_token_expires_at
+      FROM applicants a
+      JOIN applicant_details d ON d.application_id = a.application_id
+      WHERE d.application_status = 'pending_upload'
+        AND ((d.recovery_token_hash = ? AND d.recovery_token_expires_at > CURRENT_TIMESTAMP)
+          OR (d.upload_token_hash = ? AND d.upload_token_expires_at > CURRENT_TIMESTAMP))
+      LIMIT 1
+    `).bind(tokenHash, tokenHash).first()
+    if (!applicant) return json({ success: false, error: 'Recovery link is invalid or expired.' }, { status: 403 })
+
+    let uploadToken = token
+    let uploadExpiresAt = applicant.upload_token_expires_at
+    if (applicant.recovery_token_hash === tokenHash) {
+      uploadToken = createUploadToken()
+      const uploadTokenHash = await sha256(uploadToken)
+      uploadExpiresAt = new Date(Date.now() + UPLOAD_TOKEN_TTL_MS).toISOString().replace('T', ' ').replace('Z', '')
+      const consumed = await env.DB.prepare(`
+        UPDATE applicant_details
+        SET upload_token_hash = ?, upload_token_expires_at = ?,
+            recovery_token_hash = NULL, recovery_token_expires_at = NULL
+        WHERE application_id = ? AND recovery_token_hash = ?
+          AND recovery_token_expires_at > CURRENT_TIMESTAMP
+      `).bind(uploadTokenHash, uploadExpiresAt, applicant.application_id, tokenHash).run()
+      if (!databaseChanged(consumed)) return json({ success: false, error: 'Recovery link has already been used.' }, { status: 409 })
+    }
+
+    const uploaded = await env.DB.prepare('SELECT photo_type FROM applicant_photos WHERE application_id = ? ORDER BY photo_type')
+      .bind(applicant.application_id).all()
+    let answers
+    try {
+      answers = JSON.parse(applicant.responses_json)
+    } catch {
+      return json({ success: false, error: 'The saved application cannot be recovered.' }, { status: 500 })
+    }
+    return json({
+      success: true,
+      application_id: applicant.application_id,
+      email: applicant.email,
+      answers,
+      uploaded_types: uploaded.results.map((row) => row.photo_type),
+      upload_token: uploadToken,
+      upload_expires_at: `${uploadExpiresAt}Z`,
+    })
+  } catch (error) {
+    console.error('Application recovery failed', { error })
+    return json({ success: false, error: 'Unable to recover the saved application.' }, { status: 500 })
+  }
 }
 
 async function consumeNewApplicationAccess(request, env, email) {
@@ -714,6 +771,7 @@ export default {
       return json({ turnstile_site_key: env.TURNSTILE_SITE_KEY || '' })
     }
     if (url.pathname === '/api/application-access' && request.method === 'POST') return handleApplicationAccess(request, env)
+    if (url.pathname === '/api/recover' && request.method === 'POST') return handleRecoverApplication(request, env)
     if (url.pathname === '/api/apply' && request.method === 'POST') return handleApply(request, env)
     if (url.pathname === '/api/upload' && request.method === 'POST') return handleUpload(request, env)
     if (url.pathname === '/api/finalize' && request.method === 'POST') return handleFinalize(request, env)
@@ -722,4 +780,4 @@ export default {
   },
 }
 
-export { applicationAccessAccepted, applicationAlreadySubmitted, applicationCredentialRequired, detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers }
+export { applicationAccessAccepted, applicationAlreadySubmitted, applicationCredentialRequired, detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleRecoverApplication, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers }

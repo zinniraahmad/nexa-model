@@ -326,6 +326,10 @@ em { font-family: 'Playfair Display', serif; font-weight: 500; }
 .reference-label em, .reference-help em { display: block; color: var(--muted); font-weight: 400; }
 .reference-help { display: block; margin: -16px 0 28px; color: var(--muted); }
 .photo-field-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.photo-field-item { min-width: 0; display: flex; flex-direction: column; }
+.photo-field-item .upload-zone { width: 100%; flex: 1; }
+.clear-photo-selection { min-height: 44px; padding: 10px 12px; border: 0; color: var(--muted); background: transparent; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.clear-photo-selection:hover, .clear-photo-selection:focus-visible { color: var(--ink); }
 .compact-upload { min-height: 180px; padding: 25px; }
 .compact-upload em { color: var(--taupe); font-family: inherit; font-size: 13px; }
 .application-actions { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
