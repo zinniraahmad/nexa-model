@@ -45,7 +45,6 @@ h1 { margin: 0 0 8px; font-size: clamp(41px, 5vw, 65px); letter-spacing: -.055em
 .summary-submitted .summary-label i { background: #8a877e; }
 .summary-reviewing .summary-label i { background: #d09524; }
 .summary-contacted .summary-label i { background: #5289b5; }
-.summary-interview_scheduled .summary-label i { background: #8a6db0; }
 .summary-shortlisted .summary-label i { background: #4a9255; }
 .summary-rejected .summary-label i { background: #b85a5a; }
 .summary-overdue { border-color: #e1c6c3; }
@@ -93,7 +92,6 @@ select { border: 1px solid var(--line); border-radius: 8px; padding: 0 38px 0 14
 .status-submitted { background: #eeeae1; color: #656158; }
 .status-reviewing { background: #fff0c7; color: #87630a; }
 .status-contacted { background: #dceaf4; color: #285d84; }
-.status-interview_scheduled { background: #e8e0f2; color: #60417e; }
 .status-shortlisted { background: #dceede; color: #286331; }
 .status-rejected { background: #f2dddd; color: #8a3333; }
 .status-orphaned { background: #fee4e2; color: #912018; }

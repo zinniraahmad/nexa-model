@@ -5,7 +5,7 @@ import { applicationSections, declarationFields, photoFields } from '../src/appl
 import { detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
 import { API_SECURITY_HEADERS, apiJson } from '../src/apiResponse.js'
 import { requireAdmin } from '../admin/access.js'
-import { buildShortlistedEmail, normalizeTags } from '../admin/worker.js'
+import { buildShortlistedEmail, normalizeTags, parseResponses } from '../admin/worker.js'
 
 function validValue(field) {
   if (field.type === 'checkbox') return [field.options[0]]
@@ -30,6 +30,18 @@ test('accepts a complete application and rejects missing or unknown fields', () 
   answers.full_name = 'Candidate'
   answers.injected = 'unexpected'
   assert.match(validateAnswers(answers), /unknown field/i)
+})
+
+test('validates marital status and normalizes legacy admin records', () => {
+  const answers = validAnswers()
+  answers.marital_status = 'Married'
+  assert.equal(validateAnswers(answers), null)
+  answers.marital_status = 'Unknown'
+  assert.match(validateAnswers(answers), /invalid selection/i)
+
+  assert.equal(parseResponses('{"age":24}').marital_status, null)
+  assert.equal(parseResponses('{"marital_status":"Single"}').marital_status, 'Single')
+  assert.deepEqual(parseResponses('invalid'), { marital_status: null })
 })
 
 test('requires explicit acceptance of the privacy notice', () => {
@@ -252,6 +264,18 @@ test('admin workflow validates tags and uses Malaysia time for dates and filters
   assert.match(app, /Asia\/Kuala_Lumpur/)
   assert.match(app, /Export CSV/)
   assert.match(app, /Unsaved changes/)
+})
+
+test('admin workflow exposes only the active recruitment statuses', () => {
+  const worker = readFileSync(new URL('../admin/worker.js', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('../admin/src/App.jsx', import.meta.url), 'utf8')
+  const frontendStatuses = app.match(/const statusLabels = \{[^\n]+/)[0]
+  const backendStatuses = worker.match(/const STATUSES = \[[^\n]+/)[0]
+
+  assert.doesNotMatch(frontendStatuses, /interview_scheduled|Interview scheduled/)
+  assert.doesNotMatch(backendStatuses, /interview_scheduled/)
+  assert.match(frontendStatuses, /submitted.*reviewing.*shortlisted.*contacted.*rejected/)
+  assert.match(backendStatuses, /submitted.*reviewing.*shortlisted.*contacted.*rejected/)
 })
 
 test('admin detail review includes history, completeness and accessible photo controls', () => {

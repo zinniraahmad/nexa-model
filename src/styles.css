@@ -226,8 +226,9 @@ em { font-family: 'Playfair Display', serif; font-weight: 500; }
 .form-section-heading > p:not(.section-label) { margin: 20px 0 0; color: var(--muted); line-height: 1.65; }
 .form-fields { display: grid; gap: 34px; }
 .text-field { display: grid; gap: 6px; font-size: 16px; font-weight: 600; }
-.text-field > small, .choice-field legend small { display: block; margin-top: 4px; color: var(--taupe); font-size: 14px; font-weight: 400; }
+.text-field > small, .field-label > small, .choice-field legend small { display: block; margin-top: 4px; color: var(--taupe); font-size: 14px; font-weight: 400; }
 .field-help { font-style: normal !important; }
+.field-help.bm-text { font-style: italic !important; }
 .text-field input, .text-field select, .text-field textarea { width: 100%; padding: 14px 0; color: var(--ink); background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; outline: none; font: inherit; font-weight: 400; }
 .text-field textarea { padding: 14px; border: 1px solid var(--line); resize: vertical; }
 .text-field select { cursor: pointer; color-scheme: dark; }

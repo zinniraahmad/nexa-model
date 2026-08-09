@@ -2,7 +2,7 @@ import { requireAdmin } from './access.js'
 import ImageKit from '@imagekit/nodejs'
 import { apiJson } from '../src/apiResponse.js'
 
-const STATUSES = ['submitted', 'reviewing', 'contacted', 'interview_scheduled', 'shortlisted', 'rejected']
+const STATUSES = ['submitted', 'reviewing', 'shortlisted', 'contacted', 'rejected']
 const SORT_COLUMNS = {
   submitted_at: 'd.submitted_at',
   age: "CAST(json_extract(d.responses_json, '$.age') AS INTEGER)",
@@ -12,9 +12,11 @@ const SORT_COLUMNS = {
 
 function parseResponses(value) {
   try {
-    return JSON.parse(value || '{}')
+    const responses = JSON.parse(value || '{}')
+    if (!responses || typeof responses !== 'object' || Array.isArray(responses)) return { marital_status: null }
+    return { ...responses, marital_status: responses.marital_status ?? null }
   } catch {
-    return {}
+    return { marital_status: null }
   }
 }
 
@@ -26,8 +28,12 @@ function normalizeTags(value) {
 }
 
 function parseTags(value) {
-  const tags = parseResponses(value)
-  return Array.isArray(tags) ? tags : []
+  try {
+    const tags = JSON.parse(value || '[]')
+    return Array.isArray(tags) ? tags : []
+  } catch {
+    return []
+  }
 }
 
 function escapeHtml(value) {
@@ -166,7 +172,6 @@ async function handleApi(request, env, url) {
         SUM(CASE WHEN application_status = 'submitted' THEN 1 ELSE 0 END) AS submitted,
         SUM(CASE WHEN application_status = 'reviewing' THEN 1 ELSE 0 END) AS reviewing,
         SUM(CASE WHEN application_status = 'contacted' THEN 1 ELSE 0 END) AS contacted,
-        SUM(CASE WHEN application_status = 'interview_scheduled' THEN 1 ELSE 0 END) AS interview_scheduled,
         SUM(CASE WHEN application_status = 'shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
         SUM(CASE WHEN application_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
         SUM(CASE WHEN datetime(submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END) AS retention_overdue
@@ -185,7 +190,6 @@ async function handleApi(request, env, url) {
         submitted: Number(summary?.submitted || 0),
         reviewing: Number(summary?.reviewing || 0),
         contacted: Number(summary?.contacted || 0),
-        interview_scheduled: Number(summary?.interview_scheduled || 0),
         shortlisted: Number(summary?.shortlisted || 0),
         rejected: Number(summary?.rejected || 0),
         retention_overdue: Number(summary?.retention_overdue || 0),
@@ -373,4 +377,4 @@ export default {
   },
 }
 
-export { buildShortlistedEmail, normalizeTags }
+export { buildShortlistedEmail, normalizeTags, parseResponses }

@@ -3,15 +3,8 @@ import { AlertCircle, AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight
 import { applicationSections, declarationFields, photoFields } from '../../src/applicationForm.js'
 
 const MALAYSIA_TIME_ZONE = 'Asia/Kuala_Lumpur'
-const statusLabels = { submitted: 'Submitted', reviewing: 'Reviewing', contacted: 'Contacted', interview_scheduled: 'Interview scheduled', shortlisted: 'Shortlisted', rejected: 'Rejected' }
-const reviewStatusOptions = [
-  ['submitted', 'Submitted'],
-  ['reviewing', 'Reviewing'],
-  ['shortlisted', 'Shortlisted'],
-  ['contacted', 'Contacted'],
-  ['rejected', 'Rejected'],
-]
-const emptySummary = { total: 0, submitted: 0, reviewing: 0, contacted: 0, interview_scheduled: 0, shortlisted: 0, rejected: 0, retention_overdue: 0 }
+const statusLabels = { submitted: 'Submitted', reviewing: 'Reviewing', shortlisted: 'Shortlisted', contacted: 'Contacted', rejected: 'Rejected' }
+const emptySummary = { total: 0, submitted: 0, reviewing: 0, shortlisted: 0, contacted: 0, rejected: 0, retention_overdue: 0 }
 const sortOptions = [
   ['submitted_at:desc', 'Newest first'], ['submitted_at:asc', 'Oldest first'],
   ['age:asc', 'Age: youngest first'], ['age:desc', 'Age: oldest first'],
@@ -105,7 +98,7 @@ function ReviewTimeline({ record }) {
   if (!history.length && record.reviewed_at) events.push({ key: 'legacy-review', title: `Current status: ${statusLabels[record.application_status] || record.application_status}`, detail: record.reviewed_by ? `Last reviewed by ${record.reviewed_by}` : 'Previously reviewed.', at: record.reviewed_at })
   return <section className="panel timeline-panel" aria-labelledby="timeline-title">
     <p className="eyebrow">ACTIVITY</p><h3 id="timeline-title">Application timeline</h3>
-    <ol>{events.map((event) => <li className={event.warning ? 'timeline-warning' : undefined} key={event.key}><span /><div><strong>{event.title}</strong><p>{event.detail}</p><time>{formatDate(event.at)} MYT</time>{event.entry && <details className="timeline-changes"><summary>Compare changes</summary>
+    <ol>{events.map((event) => <li className={event.warning ? 'timeline-warning' : undefined} key={event.key}><span /><div><strong>{event.title}</strong><p>{event.detail}</p><time>{formatDate(event.at)}</time>{event.entry && <details className="timeline-changes"><summary>Compare changes</summary>
       {event.entry.previous_status !== event.entry.new_status && <p><span>Status</span><del>{statusLabels[event.entry.previous_status] || event.entry.previous_status || 'None'}</del><b>→</b><ins>{statusLabels[event.entry.new_status] || event.entry.new_status}</ins></p>}
       {event.entry.previous_notes !== event.entry.new_notes && <p><span>Private notes</span><del>{event.entry.previous_notes || 'No notes'}</del><b>→</b><ins>{event.entry.new_notes || 'No notes'}</ins></p>}
       {JSON.stringify(event.entry.previous_tags || []) !== JSON.stringify(event.entry.new_tags || []) && <p><span>Tags</span><del>{event.entry.previous_tags?.join(', ') || 'No tags'}</del><b>→</b><ins>{event.entry.new_tags?.join(', ') || 'No tags'}</ins></p>}
@@ -465,7 +458,7 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
       <aside className="review-panel panel">
         <p className="eyebrow">INTERNAL REVIEW</p><h3>Decision</h3>
         <form onSubmit={saveReview}>
-          <label>Status<select value={status} onChange={(event) => changeStatus(event.target.value)}>{record.application_status === 'interview_scheduled' && <option value="interview_scheduled">Interview scheduled (legacy)</option>}{reviewStatusOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+          <label>Status<select value={status} onChange={(event) => changeStatus(event.target.value)}>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
           <label>Tags<div className="tag-input"><Tag size={15} /><input value={tagsText} maxLength="320" onChange={(event) => setTagsText(event.target.value)} placeholder="e.g. commercial, KL, priority" /></div><span>Comma-separated, up to 10 tags.</span></label>
           <label>Private notes<textarea rows="9" maxLength="10000" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Add review notes…" /></label>
           {unsaved && <section className="change-preview" aria-label="Unsaved review comparison">
@@ -477,7 +470,7 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
           <div className={`save-state${unsaved ? ' unsaved' : ''}`}>{unsaved ? 'Unsaved changes' : savedAt ? `Saved ${formatDate(savedAt)} MYT` : 'No unsaved changes'}</div>
           <button className="primary-button" disabled={saving || !unsaved}>{saving ? 'Saving…' : 'Save review'}</button>
         </form>
-        {record.shortlisted_email_sent_at && <small className="email-sent-state"><Check size={14} /> Shortlist email sent<br /><span>{formatDate(record.shortlisted_email_sent_at)} MYT</span></small>}
+        {record.shortlisted_email_sent_at && <small className="email-sent-state"><Check size={14} /> Shortlist email sent<br /><span>{formatDate(record.shortlisted_email_sent_at)}</span></small>}
         {record.reviewed_by && <small>Last reviewed by {record.reviewed_by}<br />{formatDate(record.reviewed_at)}</small>}
       </aside>
     </div>
@@ -618,10 +611,10 @@ export default function App() {
     <header className="admin-header"><div><span className="wordmark">NEXA MODEL</span><span className="admin-label">ADMIN</span></div><div className="account"><span>{email}</span><button className="theme-button" onClick={toggleTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>{theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}</button><a href="/cdn-cgi/access/logout" title="Sign out"><LogOut size={17} /></a></div></header>
     <div className={`admin-body${selected ? ' detail-page' : ''}`}>
       {!selected && <>
-        <section className="page-heading"><div><p className="eyebrow">TALENT DATABASE</p><h1>Applications</h1><p>Review applicant information and photos in one place.</p></div><div className="result-meta"><div className="total"><strong>{applications.length}</strong><span>results</span></div>{lastUpdated && <small>Updated {formatDate(lastUpdated)} MYT</small>}</div></section>
+        <section className="page-heading"><div><p className="eyebrow">NEXA TALENT DATABASE</p><h1>Applications</h1><p>Review applicant information and photos in one place.</p></div><div className="result-meta">{lastUpdated && <small>Updated {formatDate(lastUpdated)}</small>}</div></section>
         <section className="summary-grid" aria-label="Application summary">
           <article className="summary-card summary-total">
-            <span className="summary-label"><i aria-hidden="true" />Total applications</span>
+            <span className="summary-label"><i aria-hidden="true" />Total</span>
             <AnimatedCount value={summary.total} />
           </article>
           {Object.entries(statusLabels).map(([key, label]) => <article className={`summary-card summary-${key}`} key={key}>
