@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Clock, Copy, Database, Download, ExternalLink, Image, ImageOff, LoaderCircle, LogIn, LogOut, Mail, MapPin, Moon, Phone, RefreshCw, Search, ShieldAlert, Sun, Tag, Trash2, Users, WifiOff, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { applicationSections, declarationFields, photoFields } from '../../src/applicationForm.js'
 
@@ -156,6 +156,76 @@ function signInAgain() {
   window.location.assign(`/cdn-cgi/access/login?redirect_url=${returnUrl}`)
 }
 
+function useDialogFocus(onClose, interactionLocked = false) {
+  const dialogRef = useRef(null)
+  const returnFocusRef = useRef(typeof document === 'undefined' ? null : document.activeElement)
+  const onCloseRef = useRef(onClose)
+  const interactionLockedRef = useRef(interactionLocked)
+  const restoreFrameRef = useRef(null)
+  onCloseRef.current = onClose
+  interactionLockedRef.current = interactionLocked
+
+  useEffect(() => {
+    if (restoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(restoreFrameRef.current)
+      restoreFrameRef.current = null
+    }
+    const dialog = dialogRef.current
+    if (!dialog) return undefined
+    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+    const focusable = () => [...dialog.querySelectorAll(focusableSelector)].filter((element) => !element.hidden)
+    const initialFocus = dialog.querySelector('[data-initial-focus]') || focusable()[0]
+    initialFocus?.focus()
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        if (!interactionLockedRef.current) {
+          event.preventDefault()
+          onCloseRef.current()
+        }
+        return
+      }
+      if (event.key !== 'Tab') return
+      const elements = focusable()
+      if (!elements.length) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+      const first = elements[0]
+      const last = elements[elements.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      const returnTarget = returnFocusRef.current
+      restoreFrameRef.current = window.requestAnimationFrame(() => {
+        if (returnTarget?.isConnected) returnTarget.focus()
+        else document.querySelector('[data-dialog-return-fallback]')?.focus()
+      })
+    }
+  }, [])
+
+  return dialogRef
+}
+
+function Toast({ toast, onDismiss }) {
+  if (!toast) return null
+  return <div className={`admin-toast toast-${toast.type}`} role={toast.type === 'error' ? 'alert' : 'status'} aria-live={toast.type === 'error' ? 'assertive' : 'polite'}>
+    <Check size={18} aria-hidden="true" />
+    <span>{toast.message}</span>
+    <button onClick={onDismiss} aria-label="Dismiss notification"><X size={16} /></button>
+  </div>
+}
+
 function ErrorState({ error, onRetry, onBack }) {
   const Icon = errorIcons[error?.code] || AlertTriangle
   const sessionExpired = error?.code === 'SESSION_EXPIRED'
@@ -180,11 +250,26 @@ function SummaryCount({ value, loading }) {
   return <strong>{Number(value || 0)}</strong>
 }
 
-function ApplicationList({ applications, loading, selectedIds, deletedView, restoringId, onToggle, onSelect, onDelete, onRestore }) {
-  if (loading) return <div className="empty"><LoaderCircle className="spin" /> Loading applications…</div>
-  if (!applications.length) return <div className="empty"><Users />{deletedView ? 'No applications are awaiting permanent deletion.' : 'No applications match your filters.'}</div>
+function ApplicationListSkeleton() {
+  return <div className="application-list application-list-skeleton" aria-busy="true" aria-label="Loading applications">
+    {Array.from({ length: 6 }, (_, index) => <div className="application-row" aria-hidden="true" key={index}>
+      <span className="skeleton-block skeleton-checkbox" />
+      <span className="skeleton-applicant"><i className="skeleton-line" /><i className="skeleton-line" /></span>
+      <span className="skeleton-line skeleton-list-location" />
+      <span className="skeleton-line skeleton-list-small" />
+      <span className="skeleton-line skeleton-list-small" />
+      <span className="skeleton-line skeleton-list-status" />
+      <span className="skeleton-line skeleton-list-date" />
+      <span className="skeleton-block skeleton-list-action" />
+    </div>)}
+  </div>
+}
+
+function ApplicationList({ applications, loading, selectedIds, deletedView, restoringId, hasFilters, onToggle, onSelect, onDelete, onRestore, onClearFilters, onShowActive }) {
+  if (loading) return <ApplicationListSkeleton />
+  if (!applications.length) return <div className="empty actionable-empty-state"><Users /><strong>{deletedView ? 'Recently Deleted is empty' : hasFilters ? 'No matching applications' : 'No applications yet'}</strong><p>{deletedView ? 'Deleted applications will remain here for 30 days and can be restored during that period.' : hasFilters ? 'Try clearing the current search and filters to see all applications.' : 'New candidate submissions will appear here automatically.'}</p>{deletedView ? <button onClick={onShowActive}>View active applications</button> : hasFilters ? <button onClick={onClearFilters}>Clear filters</button> : null}</div>
   return <div className="application-list">
-    {applications.map((item) => <div className={`application-row${deletedView ? ' deleted-row' : ''}${item.retention_warning && !deletedView ? ' retention-row' : ''}${item.application_status === 'orphaned' ? ' orphaned-row' : ''}${selectedIds.has(item.application_id) ? ' selected-row' : ''}`} key={item.application_id} role={!deletedView && item.application_status !== 'orphaned' ? 'button' : undefined} tabIndex={!deletedView && item.application_status !== 'orphaned' ? '0' : undefined} onClick={() => { if (!deletedView && item.application_status !== 'orphaned') onSelect(item.application_id) }} onKeyDown={(event) => { if (event.target === event.currentTarget && event.key === 'Enter' && !deletedView && item.application_status !== 'orphaned') onSelect(item.application_id) }}>
+    {applications.map((item) => <div className={`application-row${deletedView ? ' deleted-row' : ''}${item.retention_warning && !deletedView ? ' retention-row' : ''}${item.application_status === 'orphaned' ? ' orphaned-row' : ''}${selectedIds.has(item.application_id) ? ' selected-row' : ''}`} key={item.application_id} role={!deletedView && item.application_status !== 'orphaned' ? 'button' : undefined} tabIndex={!deletedView && item.application_status !== 'orphaned' ? '0' : undefined} onClick={() => { if (!deletedView && item.application_status !== 'orphaned') onSelect(item.application_id) }} onKeyDown={(event) => { if (event.target === event.currentTarget && ['Enter', ' '].includes(event.key) && !deletedView && item.application_status !== 'orphaned') { event.preventDefault(); onSelect(item.application_id) } }}>
       {deletedView ? <span className="deleted-row-marker"><Trash2 size={15} /></span> : <input className="row-checkbox" type="checkbox" checked={selectedIds.has(item.application_id)} disabled={item.application_status === 'orphaned'} aria-label={`Select ${item.full_name}`} onClick={(event) => event.stopPropagation()} onChange={() => onToggle(item.application_id)} />}
       <div className="applicant-primary"><strong>{item.full_name}</strong><span>{item.email}</span></div>
       <span className="location">{item.current_location}</span>
@@ -208,13 +293,14 @@ function DeleteDialog({ application, deletionType, deleting, error, onCancel, on
   const confirmed = normalized === application.full_name.trim().toLocaleLowerCase() || normalized === application.application_id.toLocaleLowerCase()
   const retentionCleanup = deletionType === 'retention_cleanup'
   const permanent = deletionType === 'permanent'
+  const dialogRef = useDialogFocus(onCancel, deleting)
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) onCancel() }}>
-    <section className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title">
+    <section ref={dialogRef} className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" tabIndex="-1">
       <button className="dialog-close" onClick={onCancel} disabled={deleting} aria-label="Close"><X size={18} /></button>
       <div className={`dialog-icon${retentionCleanup ? ' retention-dialog-icon' : ''}`}>{retentionCleanup ? <Clock size={22} /> : <Trash2 size={22} />}</div>
       <h2 id="delete-title">{permanent ? 'Permanently delete this application?' : retentionCleanup ? 'Move to retention cleanup?' : 'Delete this application?'}</h2>
       <p>{permanent ? <><strong>{application.full_name}</strong> and all associated database records and ImageKit photos will be permanently removed. This cannot be undone.</> : <><strong>{application.full_name}</strong> will move to Recently Deleted for 30 days. It can be restored during that period; permanent deletion still requires a separate admin action.</>}</p>
-      <label className="delete-confirmation-field">Type the applicant’s full name or reference ID to confirm<input autoFocus value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={deleting} placeholder={application.full_name} autoComplete="off" /></label>
+      <label className="delete-confirmation-field">Type the applicant’s full name or reference ID to confirm<input data-initial-focus value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={deleting} placeholder={application.full_name} autoComplete="off" /></label>
       <code className="delete-reference">{application.application_id}</code>
       {error && <p className="form-error" role="alert">{error.message || error}{error.code === 'SESSION_EXPIRED' && <button type="button" className="inline-action" onClick={signInAgain}>Sign in again</button>}</p>}
       <div className="dialog-actions"><button className="cancel-button" onClick={onCancel} disabled={deleting}>Cancel</button><button className="delete-confirm-button" onClick={() => onConfirm(confirmation)} disabled={deleting || !confirmed}>{deleting ? (permanent ? 'Deleting…' : 'Moving…') : permanent ? 'Permanently delete' : retentionCleanup ? 'Move to cleanup' : 'Delete application'}</button></div>
@@ -223,8 +309,9 @@ function DeleteDialog({ application, deletionType, deleting, error, onCancel, on
 }
 
 function ShortlistDialog({ application, confirming, error, onCancel, onConfirm }) {
+  const dialogRef = useDialogFocus(onCancel, confirming)
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !confirming) onCancel() }}>
-    <section className="dialog shortlist-dialog" role="alertdialog" aria-modal="true" aria-labelledby="shortlist-title">
+    <section ref={dialogRef} className="dialog shortlist-dialog" role="alertdialog" aria-modal="true" aria-labelledby="shortlist-title" tabIndex="-1">
       <button className="dialog-close" onClick={onCancel} disabled={confirming} aria-label="Close"><X size={18} /></button>
       <div className="dialog-icon"><Mail size={22} /></div>
       <h2 id="shortlist-title">Shortlist this candidate?</h2>
@@ -279,7 +366,7 @@ function DetailSkeleton({ onBack }) {
   </div>
 }
 
-function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdated }) {
+function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdated, onToast }) {
   const [record, setRecord] = useState(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -347,6 +434,7 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
       applySavedReview(result, status, notes, tags)
       setTagsText(tags.join(', '))
       setSavedAt(new Date().toISOString())
+      onToast('Review saved successfully.')
       onUpdated()
     } catch (err) {
       setError(err)
@@ -391,6 +479,7 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
       applySavedReview(result, 'shortlisted', notes, tags)
       setSavedAt(new Date().toISOString())
       setShortlistDialogOpen(false)
+      onToast('Candidate shortlisted and email sent successfully.')
       onUpdated()
     } catch (err) {
       setShortlistError(err)
@@ -541,7 +630,7 @@ export default function App() {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [restoringId, setRestoringId] = useState(null)
-  const [actionMessage, setActionMessage] = useState('')
+  const [toast, setToast] = useState(null)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [bulkStatus, setBulkStatus] = useState('reviewing')
   const [bulkSaving, setBulkSaving] = useState(false)
@@ -557,6 +646,17 @@ export default function App() {
   const selectedIndex = applications.findIndex((application) => application.application_id === selected)
   const previousId = selectedIndex > 0 ? applications[selectedIndex - 1].application_id : null
   const nextId = selectedIndex >= 0 && selectedIndex < applications.length - 1 ? applications[selectedIndex + 1].application_id : null
+  const hasFilters = Boolean(search || status || dateFrom || dateTo || sortValue !== 'submitted_at:desc')
+
+  function showToast(message, type = 'success') {
+    setToast({ id: Date.now(), message, type })
+  }
+
+  useEffect(() => {
+    if (!toast) return undefined
+    const timer = window.setTimeout(() => setToast(null), 4500)
+    return () => window.clearTimeout(timer)
+  }, [toast])
 
   function loadApplications() {
     setLoading(true)
@@ -602,7 +702,14 @@ export default function App() {
     setDeletedView(nextDeletedView)
     setSelected(null)
     setSelectedIds(new Set())
-    setActionMessage('')
+  }
+
+  function clearFilters() {
+    setSearch('')
+    setStatus('')
+    setDateFrom('')
+    setDateTo('')
+    setSortValue('submitted_at:desc')
   }
 
   function toggleApplication(applicationId) {
@@ -647,7 +754,7 @@ export default function App() {
         body: JSON.stringify({ confirmation, ...(permanent ? {} : { deletion_type: deleteTarget.deletionType }) }),
       })
       setDeleteTarget(null)
-      setActionMessage(permanent ? 'Application permanently deleted and recorded in the audit log.' : 'Application moved to Recently Deleted for 30 days.')
+      showToast(permanent ? 'Application permanently deleted and recorded in the audit log.' : 'Application moved to Recently Deleted for 30 days.')
       loadApplications()
     } catch (err) {
       setDeleteError(err)
@@ -658,10 +765,9 @@ export default function App() {
 
   async function restoreApplication(application) {
     setRestoringId(application.application_id)
-    setActionMessage('')
     try {
       await api(`/api/admin/applications/${encodeURIComponent(application.application_id)}/restore`, { method: 'POST', body: '{}' })
-      setActionMessage(`${application.full_name} was restored.`)
+      showToast(`${application.full_name} was restored.`)
       loadApplications()
     } catch (err) {
       setError(err)
@@ -676,10 +782,9 @@ export default function App() {
       {!selected && <>
         <section className="page-heading"><div><p className="eyebrow">NEXA TALENT DATABASE</p><h1>{deletedView ? 'Recently Deleted' : 'Applications'}</h1><p>{deletedView ? 'Applications remain recoverable for 30 days before permanent deletion.' : 'Review applicant information and photos in one place.'}</p></div><div className="result-meta">{lastUpdated && <small>Updated {formatDate(lastUpdated)}</small>}</div></section>
         <nav className="database-view-tabs" aria-label="Application database views">
-          <button className={!deletedView ? 'active' : undefined} aria-pressed={!deletedView} onClick={() => changeDeletedView(false)}>Active applications</button>
+          <button data-dialog-return-fallback className={!deletedView ? 'active' : undefined} aria-pressed={!deletedView} onClick={() => changeDeletedView(false)}>Active applications</button>
           <button className={deletedView ? 'active' : undefined} aria-pressed={deletedView} onClick={() => changeDeletedView(true)}>Recently deleted</button>
         </nav>
-        {actionMessage && <p className="action-message" role="status">{actionMessage}</p>}
         {!deletedView && <section className="summary-grid" aria-label="Application summary" aria-busy={loading}>
           <article className="summary-card summary-total">
             <span className="summary-label"><i aria-hidden="true" />Total</span>
@@ -691,12 +796,12 @@ export default function App() {
           </article>)}
         </section>}
         {retentionWarnings.length > 0 && <section className="retention-alert" role="status"><AlertTriangle size={20} /><div><strong>{retentionWarnings.length} retention review{retentionWarnings.length === 1 ? '' : 's'} due</strong><span>These applications reach their six-month deletion date within 30 days or are already overdue. Review before deleting.</span></div></section>}
-        <section className="toolbar primary-filters"><label><Search size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, email, phone or reference" /></label><select aria-label="Filter by status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></section>
+        <section className="toolbar primary-filters"><label htmlFor="application-search"><span className="sr-only">Search applications</span><Search size={18} aria-hidden="true" /><input id="application-search" aria-label="Search applications" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, email, phone or reference" /></label><select aria-label="Filter by status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></section>
         <section className="advanced-filters" aria-label="Application filters">
           <label>From<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
           <label>To<input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} /></label>
           <label>Sort<select value={sortValue} onChange={(event) => setSortValue(event.target.value)}>{sortOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-          <button className="secondary-button clear-filters" onClick={() => { setSearch(''); setStatus(''); setDateFrom(''); setDateTo(''); setSortValue('submitted_at:desc') }}>Clear</button>
+          <button className="secondary-button clear-filters" onClick={clearFilters}>Clear</button>
           <button className="export-button" disabled={loading || !applications.length} onClick={() => exportApplications(applications)}><Download size={16} /> Export CSV</button>
         </section>
         {!deletedView && !error && !loading && applications.length > 0 && <section className="selection-toolbar">
@@ -704,10 +809,11 @@ export default function App() {
           {selectedIds.size > 0 && <div><strong>{selectedIds.size} selected</strong><select aria-label="Bulk status" value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value)}>{Object.entries(statusLabels).filter(([value]) => value !== 'shortlisted').map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><button onClick={updateSelectedStatus} disabled={bulkSaving}>{bulkSaving ? 'Updating…' : 'Apply status'}</button></div>}
           {bulkMessage && <span role="status">{bulkMessage}</span>}
         </section>}
-        {error ? <ErrorState error={error} onRetry={loadApplications} /> : <ApplicationList applications={applications} loading={loading} selectedIds={selectedIds} deletedView={deletedView} restoringId={restoringId} onToggle={toggleApplication} onSelect={selectApplication} onDelete={(application, deletionType) => { setDeleteError(''); setDeleteTarget({ application, deletionType }) }} onRestore={restoreApplication} />}
+        {error ? <ErrorState error={error} onRetry={loadApplications} /> : <ApplicationList applications={applications} loading={loading} selectedIds={selectedIds} deletedView={deletedView} restoringId={restoringId} hasFilters={hasFilters} onToggle={toggleApplication} onSelect={selectApplication} onDelete={(application, deletionType) => { setDeleteError(''); setDeleteTarget({ application, deletionType }) }} onRestore={restoreApplication} onClearFilters={clearFilters} onShowActive={() => changeDeletedView(false)} />}
       </>}
-      {selected && <Detail applicationId={selected} previousId={previousId} nextId={nextId} onBack={() => setSelected(null)} onNavigate={selectApplication} onUpdated={loadApplications} />}
+      {selected && <Detail applicationId={selected} previousId={previousId} nextId={nextId} onBack={() => setSelected(null)} onNavigate={selectApplication} onUpdated={loadApplications} onToast={showToast} />}
     </div>
     {deleteTarget && <DeleteDialog application={deleteTarget.application} deletionType={deleteTarget.deletionType} deleting={deleting} error={deleteError} onCancel={() => setDeleteTarget(null)} onConfirm={deleteApplication} />}
+    <Toast toast={toast} onDismiss={() => setToast(null)} />
   </div>
 }

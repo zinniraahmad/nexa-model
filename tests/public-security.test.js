@@ -267,8 +267,28 @@ test('admin workflow validates tags and uses Malaysia time for dates and filters
   assert.match(app, /Export CSV/)
   assert.match(app, /Unsaved changes/)
   assert.match(app, /summary-count-skeleton/)
-  assert.doesNotMatch(app, /AnimatedCount|requestAnimationFrame/)
+  assert.doesNotMatch(app, /function AnimatedCount/)
   assert.doesNotMatch(app, /<label>Retention/)
+})
+
+test('admin accessibility and UX includes modal focus management, skeletons, toasts and keyboard controls', () => {
+  const app = readFileSync(new URL('../admin/src/App.jsx', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('../admin/src/styles.css', import.meta.url), 'utf8')
+
+  assert.match(app, /function useDialogFocus/)
+  assert.match(app, /event\.key === 'Escape'/)
+  assert.match(app, /event\.key !== 'Tab'/)
+  assert.match(app, /returnTarget\?\.isConnected/)
+  assert.match(app, /ApplicationListSkeleton/)
+  assert.doesNotMatch(app, /Loading applications…<\/div>/)
+  assert.match(app, /Clear filters/)
+  assert.match(app, /View active applications/)
+  assert.match(app, /function Toast/)
+  assert.match(app, /Review saved successfully/)
+  assert.match(app, /aria-label="Search applications"/)
+  assert.match(app, /\['Enter', ' '\]\.includes\(event\.key\)/)
+  assert.match(styles, /@media \(max-width: 900px\)/)
+  assert.match(styles, /@media \(max-width: 600px\)/)
 })
 
 test('admin workflow exposes only the active recruitment statuses', () => {
