@@ -3,6 +3,7 @@ import { API_SECURITY_HEADERS, apiJson as json } from './apiResponse.js'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
 const UPLOAD_TOKEN_TTL_MS = 60 * 60 * 1000
+const RECOVERY_TOKEN_TTL_MS = 60 * 60 * 1000
 const INTAKE_TOKEN_TTL_MS = 2 * 60 * 60 * 1000
 const MAX_JSON_BYTES = 100_000
 const MAX_ACCESS_REQUEST_BYTES = 4 * 1024
@@ -91,6 +92,15 @@ function applicationAlreadySubmitted() {
   return json({ success: true, already_submitted: true }, { status: 200 })
 }
 
+function applicationRecoverySent() {
+  return json({
+    success: true,
+    already_submitted: false,
+    recovery_required: true,
+    message: 'Your previous upload was not completed. A secure recovery link has been sent to your email. / Muat naik terdahulu belum selesai. Pautan pemulihan selamat telah dihantar ke e-mel anda.',
+  }, { status: 200 })
+}
+
 function applicationDuplicateConflict() {
   return json({ success: false, already_submitted: true, error: 'An application has already been submitted for this email address.' }, { status: 409 })
 }
@@ -171,6 +181,33 @@ async function requireUploadAccess(request, env, applicationId, includeFinalized
   `).bind(applicationId, tokenHash).first()
 }
 
+async function authorizePendingReplacement(request, env, applicationId, nextUploadTokenHash, nextUploadExpiresAt) {
+  const token = bearerToken(request)
+  if (!token || token.length > 200) return false
+  const tokenHash = await sha256(token)
+  const result = await env.DB.prepare(`
+    UPDATE applicant_details
+    SET upload_token_hash = ?, upload_token_expires_at = ?,
+        recovery_token_hash = NULL, recovery_token_expires_at = NULL
+    WHERE application_id = ?
+      AND application_status = 'pending_upload'
+      AND recovery_token_hash = ?
+      AND recovery_token_expires_at > CURRENT_TIMESTAMP
+  `).bind(nextUploadTokenHash, nextUploadExpiresAt, applicationId, tokenHash).run()
+  if (databaseChanged(result)) return true
+
+  const resumed = await env.DB.prepare(`
+    UPDATE applicant_details
+    SET upload_token_hash = ?, upload_token_expires_at = ?,
+        recovery_token_hash = NULL, recovery_token_expires_at = NULL
+    WHERE application_id = ?
+      AND application_status = 'pending_upload'
+      AND upload_token_hash = ?
+      AND upload_token_expires_at > CURRENT_TIMESTAMP
+  `).bind(nextUploadTokenHash, nextUploadExpiresAt, applicationId, tokenHash).run()
+  return databaseChanged(resumed)
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character])
 }
@@ -249,6 +286,58 @@ async function sendAdminSubmissionNotification(env, applicant) {
   return response.ok
 }
 
+async function ensurePendingRecoveryEmail(request, env, applicant) {
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) {
+    console.error('provider.resend_not_configured', { messageType: 'pending_recovery' })
+    return false
+  }
+  const recoveryToken = createUploadToken()
+  const recoveryTokenHash = await sha256(recoveryToken)
+  const recoveryExpiresAt = new Date(Date.now() + RECOVERY_TOKEN_TTL_MS).toISOString().replace('T', ' ').replace('Z', '')
+  const claimed = await env.DB.prepare(`
+    UPDATE applicant_details
+    SET recovery_token_hash = ?, recovery_token_expires_at = ?
+    WHERE application_id = ?
+      AND application_status = 'pending_upload'
+      AND (recovery_token_expires_at IS NULL OR recovery_token_expires_at <= CURRENT_TIMESTAMP)
+  `).bind(recoveryTokenHash, recoveryExpiresAt, applicant.application_id).run()
+
+  // Do not invalidate a recovery link that is still valid.
+  if (!databaseChanged(claimed)) return true
+
+  const replyTo = env.EMAIL_REPLY_TO || 'hello@nexa-model.com'
+  const recoveryUrl = new URL('/apply', env.PUBLIC_SITE_URL || request.url)
+  recoveryUrl.searchParams.set('recovery', recoveryToken)
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': `application-recovery/${applicant.application_id}/${recoveryTokenHash.slice(0, 16)}`,
+      },
+      body: JSON.stringify({
+        from: env.EMAIL_FROM,
+        to: [applicant.email],
+        reply_to: replyTo,
+        subject: 'Continue your unfinished Nexa Model application',
+        text: `Hi ${applicant.full_name},\n\nYour previous Nexa Model photo upload did not finish. Use this secure single-use link within 60 minutes to restart and replace the unfinished application:\n\n${recoveryUrl}\n\nIf you did not request this, ignore this email.\n\nMuat naik gambar permohonan Nexa Model anda sebelum ini belum selesai. Gunakan pautan selamat sekali guna ini dalam masa 60 minit untuk memulakan semula dan menggantikan permohonan yang belum lengkap. Jika anda tidak membuat permintaan ini, abaikan e-mel ini.\n\nPrivacy enquiries / Pertanyaan privasi: ${replyTo}`,
+        html: `<p>Hi ${escapeHtml(applicant.full_name)},</p><p>Your previous Nexa Model photo upload did not finish.</p><p><a href="${escapeHtml(recoveryUrl.toString())}">Restart your unfinished application</a></p><p>This secure single-use link expires in 60 minutes. If you did not request this, ignore this email.</p><hr><p>Muat naik gambar permohonan Nexa Model anda sebelum ini belum selesai.</p><p><a href="${escapeHtml(recoveryUrl.toString())}">Mulakan semula permohonan yang belum lengkap</a></p><p>Pautan selamat sekali guna ini tamat tempoh dalam masa 60 minit. Jika anda tidak membuat permintaan ini, abaikan e-mel ini.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
+      }),
+    })
+    if (response.ok) return true
+    console.error('provider.resend_request_failed', { messageType: 'pending_recovery', status: response.status })
+  } catch (error) {
+    console.error('Pending recovery email failed', { applicationId: applicant.application_id, error })
+  }
+
+  await env.DB.prepare(`
+    UPDATE applicant_details SET recovery_token_hash = NULL, recovery_token_expires_at = NULL
+    WHERE application_id = ? AND recovery_token_hash = ?
+  `).bind(applicant.application_id, recoveryTokenHash).run().catch(() => {})
+  return false
+}
+
 async function consumeNewApplicationAccess(request, env, email) {
   const token = bearerToken(request)
   if (!token || token.length > 200) return false
@@ -287,8 +376,17 @@ async function handleApplicationAccess(request, env) {
   }
 
   try {
-    const existing = await env.DB.prepare('SELECT 1 AS present FROM applicants WHERE email = ? COLLATE NOCASE LIMIT 1')
-      .bind(email).first()
+    const existing = await env.DB.prepare(`
+      SELECT a.application_id, a.full_name, a.email, d.application_status
+      FROM applicants a
+      JOIN applicant_details d ON d.application_id = a.application_id
+      WHERE a.email = ? COLLATE NOCASE LIMIT 1
+    `).bind(email).first()
+    if (existing?.application_status === 'pending_upload') {
+      const sent = await ensurePendingRecoveryEmail(request, env, existing)
+      if (!sent) return json({ success: false, error: 'Unable to send the recovery email. Please try again.' }, { status: 503 })
+      return applicationRecoverySent()
+    }
     if (existing) return applicationAlreadySubmitted()
     const access = await issueBrowserApplicationAccess(env, email)
     return applicationAccessAccepted(access.token, access.expiresAt)
@@ -423,22 +521,47 @@ async function handleApply(request, env) {
     const email = String(answers.email).trim().toLowerCase()
     const phone = String(answers.phone).trim()
     const location = String(answers.current_location).trim()
-    const existing = await env.DB.prepare('SELECT 1 AS present FROM applicants WHERE email = ? COLLATE NOCASE LIMIT 1')
-      .bind(email).first()
-    if (existing) return applicationDuplicateConflict()
-    if (!await consumeNewApplicationAccess(request, env, email)) return applicationCredentialRequired()
     const uploadToken = createUploadToken()
     const uploadTokenHash = await sha256(uploadToken)
     const uploadExpiresAt = new Date(Date.now() + UPLOAD_TOKEN_TTL_MS).toISOString().replace('T', ' ').replace('Z', '')
-    const applicationId = crypto.randomUUID()
-    await env.DB.batch([
-      env.DB.prepare(`INSERT INTO applicants (application_id, full_name, email, phone, current_location) VALUES (?, ?, ?, ?, ?)`)
-        .bind(applicationId, fullName, email, phone, location),
-      env.DB.prepare(`INSERT INTO applicant_details (application_id, responses_json, application_status, upload_token_hash, upload_token_expires_at) VALUES (?, ?, 'pending_upload', ?, ?)`)
-        .bind(applicationId, responsesJson, uploadTokenHash, uploadExpiresAt),
-    ])
+    const existing = await env.DB.prepare(`
+      SELECT a.application_id, d.application_status
+      FROM applicants a
+      JOIN applicant_details d ON d.application_id = a.application_id
+      WHERE a.email = ? COLLATE NOCASE LIMIT 1
+    `).bind(email).first()
+    let applicationId = existing?.application_id
+    if (existing) {
+      if (existing.application_status !== 'pending_upload') return applicationDuplicateConflict()
+      if (!await authorizePendingReplacement(request, env, applicationId, uploadTokenHash, uploadExpiresAt)) {
+        return applicationCredentialRequired()
+      }
+      await deleteImageKitFiles(env, applicationId)
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM applicant_photos WHERE application_id = ?').bind(applicationId),
+        env.DB.prepare('UPDATE applicants SET full_name = ?, phone = ?, current_location = ? WHERE application_id = ?')
+          .bind(fullName, phone, location, applicationId),
+        env.DB.prepare(`
+          UPDATE applicant_details
+          SET responses_json = ?, application_status = 'pending_upload', submitted_at = CURRENT_TIMESTAMP,
+              upload_token_hash = ?, upload_token_expires_at = ?, confirmation_sent_at = NULL,
+              admin_notification_sent_at = NULL, recovery_token_hash = NULL, recovery_token_expires_at = NULL
+          WHERE application_id = ?
+        `).bind(responsesJson, uploadTokenHash, uploadExpiresAt, applicationId),
+      ])
+      console.log('application.pending_upload_replaced', { applicationId })
+    } else {
+      if (!await consumeNewApplicationAccess(request, env, email)) return applicationCredentialRequired()
+      applicationId = crypto.randomUUID()
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO applicants (application_id, full_name, email, phone, current_location) VALUES (?, ?, ?, ?, ?)`)
+          .bind(applicationId, fullName, email, phone, location),
+        env.DB.prepare(`INSERT INTO applicant_details (application_id, responses_json, application_status, upload_token_hash, upload_token_expires_at) VALUES (?, ?, 'pending_upload', ?, ?)`)
+          .bind(applicationId, responsesJson, uploadTokenHash, uploadExpiresAt),
+      ])
+      console.log('application.pending_upload_created', { applicationId })
+    }
 
-    console.log('application.pending_upload_created', { applicationId })
     return json({ success: true, application_id: applicationId, upload_token: uploadToken, upload_expires_at: `${uploadExpiresAt}Z` }, { status: 201 })
   } catch (error) {
     if (/unique constraint/i.test(String(error?.message || error))) return applicationDuplicateConflict()

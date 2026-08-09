@@ -17,6 +17,12 @@ const ACCEPTED_EXTENSIONS = ['.png', '.jpg', '.jpeg']
 const VALID_EMAIL = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
 const PENDING_SESSION_KEY = 'nexa_pending_upload_session'
 
+function recoveryTokenFromUrl() {
+  if (typeof window === 'undefined') return ''
+  const token = new URL(window.location.href).searchParams.get('recovery') || ''
+  return token.length <= 200 ? token : ''
+}
+
 function readPendingUploadSession() {
   if (typeof window === 'undefined') return null
   try {
@@ -248,6 +254,7 @@ export default function TalentApplication() {
   const [submitTurnstileResetKey, setSubmitTurnstileResetKey] = useState(0)
   const [uploadToken, setUploadToken] = useState('')
   const [emailAccessToken, setEmailAccessToken] = useState('')
+  const [recoveryToken, setRecoveryToken] = useState(recoveryTokenFromUrl)
 
   const photoStep = applicationSections.length + 1
   const declarationStep = photoStep + 1
@@ -263,6 +270,13 @@ export default function TalentApplication() {
     desktopImage.src = formVisuals[nextIndex]
     mobileImage.src = formMobileVisuals[nextIndex]
   }, [visualIndex])
+
+  useEffect(() => {
+    if (!recoveryToken) return
+    const url = new URL(window.location.href)
+    url.searchParams.delete('recovery')
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [recoveryToken])
 
   function moveTo(nextStep) {
     setMessage('')
@@ -282,14 +296,14 @@ export default function TalentApplication() {
   function applicationCredential() {
     const normalizedEmail = String(answers.email || '').trim().toLowerCase()
     const pendingSession = readPendingUploadSession()
-    return (pendingSession?.email === normalizedEmail ? pendingSession.uploadToken : '') || emailAccessToken
+    return recoveryToken || (pendingSession?.email === normalizedEmail ? pendingSession.uploadToken : '') || emailAccessToken
   }
 
   async function continueSection() {
     if (step === 1 && !VALID_EMAIL.test(String(answers.email || ''))) return setMessage('Please enter a complete email address with a valid domain, for example name@gmail.com or name@yahoo.com.')
     if (step === 1 && answers.age_gate !== 'Yes') return setMessage('This application is only available to candidates aged 18 to 30.')
     if (step === 1 && answers.voluntary_application !== 'Yes') return setMessage('You must be applying voluntarily to continue.')
-    if (step === 1 && !emailAccessToken) {
+    if (step === 1 && !applicationCredential()) {
       if (!turnstileToken) return setMessage('Please complete the security verification to continue in this browser.')
       setSubmitting(true)
       setMessage('Starting a secure browser session...')
@@ -304,6 +318,10 @@ export default function TalentApplication() {
         if (data.already_submitted) {
           setAlreadySubmitted(true)
           setMessage('')
+          return
+        }
+        if (data.recovery_required) {
+          setMessage(data.message || 'Check your email and spam folder for a secure recovery link.')
           return
         }
         if (!data.application_access_token) throw new Error('Unable to start a secure browser session.')
@@ -398,6 +416,7 @@ export default function TalentApplication() {
           if (data.access_required) {
             clearPendingUploadSession()
             setEmailAccessToken('')
+            setRecoveryToken('')
             setStep(1)
             window.scrollTo({ top: 0, behavior: 'smooth' })
           }
@@ -406,6 +425,7 @@ export default function TalentApplication() {
         if (emailAccessToken) {
           setEmailAccessToken('')
         }
+        if (recoveryToken) setRecoveryToken('')
         id = data.application_id
         token = data.upload_token
         setSubmitTurnstileToken('')
@@ -421,13 +441,31 @@ export default function TalentApplication() {
         const currentUpload = uploads[index]
         setUploadProgress((current) => ({ ...current, [currentUpload.fieldKey]: { ...current[currentUpload.fieldKey], status: 'uploading' } }))
         setMessage(`Uploading photo ${index + 1} of ${uploads.length}...`)
-        const body = new FormData()
-        body.append('file', currentUpload.file)
-        body.append('application_id', id)
-        body.append('photo_type', currentUpload.type)
-        const response = await fetch('/api/upload', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body })
-        const result = await response.json().catch(() => ({}))
-        if (!response.ok || !result.success) throw new Error(result.error || `Photo ${index + 1} failed to upload.`)
+        let uploaded = false
+        let uploadError = `Photo ${index + 1} failed to upload.`
+        for (let attempt = 1; attempt <= 3 && !uploaded; attempt += 1) {
+          try {
+            const body = new FormData()
+            body.append('file', currentUpload.file)
+            body.append('application_id', id)
+            body.append('photo_type', currentUpload.type)
+            const response = await fetch('/api/upload', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body })
+            const result = await response.json().catch(() => ({}))
+            uploaded = response.ok && result.success
+            if (!uploaded) {
+              uploadError = result.error || uploadError
+              const retryable = response.status === 429 || response.status >= 500
+              if (!retryable) break
+            }
+          } catch {
+            uploadError = 'The photo upload connection was interrupted.'
+          }
+          if (!uploaded && attempt < 3) {
+            setMessage(`Photo ${index + 1} was interrupted. Retrying (${attempt + 1}/3)...`)
+            await new Promise((resolve) => window.setTimeout(resolve, attempt * 1000))
+          }
+        }
+        if (!uploaded) throw new Error(`${uploadError} Your saved application remains incomplete; use the same email to request a secure recovery link if you refresh.`)
         setUploadProgress((current) => { const item = current[currentUpload.fieldKey]; const uploaded = item.uploaded + 1; return { ...current, [currentUpload.fieldKey]: { ...item, uploaded, status: uploaded === item.total ? 'complete' : 'uploading' } } })
       }
       setMessage('Finalizing your application...')
@@ -464,7 +502,7 @@ export default function TalentApplication() {
       {alreadySubmitted && <section className="success-step duplicate-application"><div className="success-icon"><Check size={28} /></div><p className="section-label">APPLICATION ALREADY RECEIVED</p><h2>You have already submitted an application. Thank you.</h2><p>Nexa Model will contact you through WhatsApp if you are shortlisted.</p><p className="bm-text">Anda telah menghantar permohonan. Terima kasih. Nexa Model akan menghubungi anda melalui WhatsApp sekiranya anda disenarai pendek.</p><Link className="button button-dark" to="/">Return home</Link></section>}
       {!alreadySubmitted && <>
       {!alreadySubmitted && step === 0 && <Introduction accepted={introductionAccepted} setAccepted={setIntroductionAccepted} onContinue={() => moveTo(1)} />}
-      {!alreadySubmitted && step >= 1 && step <= applicationSections.length && <FormSection section={applicationSections[step - 1]} answers={answers} setAnswer={setAnswer} onBack={() => moveTo(step - 1)} onNext={continueSection} submitting={step === 1 && submitting} nextLabel="Continue">{step === 1 && !emailAccessToken && <TurnstileWidget onToken={setTurnstileToken} resetKey={turnstileResetKey} />}</FormSection>}
+      {!alreadySubmitted && step >= 1 && step <= applicationSections.length && <FormSection section={applicationSections[step - 1]} answers={answers} setAnswer={setAnswer} onBack={() => moveTo(step - 1)} onNext={continueSection} submitting={step === 1 && submitting} nextLabel="Continue">{step === 1 && !applicationCredential() && <TurnstileWidget onToken={setTurnstileToken} resetKey={turnstileResetKey} />}</FormSection>}
 
       {step === photoStep && <section className="photo-step expanded-form"><header className="form-section-heading"><p className="section-label">SECTION 10</p><h2>Photo Submission</h2><em className="section-title-bm">Penghantaran Gambar</em><p>Select one or multiple recent, clear and unfiltered PNG, JPG or JPEG images. Maximum 10 MB each.</p><p className="bm-text">Pilih satu atau beberapa gambar PNG, JPG atau JPEG yang terkini, jelas dan tanpa filter. Maksimum 10 MB setiap gambar.</p></header><div className="photo-field-list">{photoFields.map((field) => <label className="upload-zone compact-upload" key={field.key}><ImagePlus size={25} /><strong>{field.label}{field.required && <b className="required-mark"> *</b>}</strong><em className="bm-text">{field.labelBm}</em><span>{photos[field.key]?.length ? `${photos[field.key].length} selected — click to replace` : field.min === field.max ? `${field.min} file(s)` : `${field.min}–${field.max} file(s)`}</span>{photos[field.key]?.length > 0 && <div className="photo-preview-grid">{photos[field.key].map((file) => <FileThumbnail key={`${file.name}-${file.lastModified}`} file={file} />)}</div>}<input type="file" accept=".png,.jpg,.jpeg" multiple={field.max > 1} onChange={(event) => selectPhotos(field, event)} /></label>)}</div><div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(step - 1)}>Back</button><button className="button button-dark" type="button" onClick={continueFromPhotos}>Continue <ArrowRight size={17} /></button></div></section>}
 

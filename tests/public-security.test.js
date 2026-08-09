@@ -92,7 +92,7 @@ function accessDatabase(existing) {
         bind() {
           return {
             async first() {
-              return sql.includes('SELECT 1 AS present') ? existing : null
+              return sql.includes('JOIN applicant_details') ? existing : null
             },
             async run() {
               return { meta: { changes: 1 } }
@@ -104,14 +104,14 @@ function accessDatabase(existing) {
   }
 }
 
-test('checks existing email after Turnstile and sends no pre-application email', async (context) => {
+test('checks finalized applications after Turnstile and sends no pre-application email', async (context) => {
   const outboundUrls = []
   context.mock.method(globalThis, 'fetch', async (url) => {
     outboundUrls.push(String(url))
     if (String(url).includes('siteverify')) return Response.json({ success: true })
     return new Response('', { status: 200 })
   })
-  const states = [null, { present: 1 }]
+  const states = [null, { application_id: 'submitted-1', full_name: 'Submitted Candidate', email: 'candidate@example.com', application_status: 'submitted' }]
   const responses = []
   for (const existing of states) {
     const request = new Request('https://nexa-model.com/api/application-access', {
@@ -137,6 +137,98 @@ test('checks existing email after Turnstile and sends no pre-application email',
   assert.equal(responses[1].body.application_access_token, undefined)
   assert.equal(outboundUrls.filter((url) => url.includes('siteverify')).length, 2)
   assert.equal(outboundUrls.some((url) => url.includes('resend.com')), false)
+})
+
+test('emails a secure recovery link instead of calling an incomplete upload submitted', async (context) => {
+  const state = { recoveryClaimed: false, emailCalls: 0 }
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (String(url).includes('siteverify')) return Response.json({ success: true })
+    assert.equal(String(url), 'https://api.resend.com/emails')
+    const payload = JSON.parse(init.body)
+    assert.equal(payload.to[0], 'candidate@example.com')
+    assert.match(payload.subject, /unfinished/i)
+    assert.match(payload.text, /\/apply\?recovery=[A-Za-z0-9_-]+/)
+    state.emailCalls += 1
+    return new Response('', { status: 200 })
+  })
+  const env = {
+    TURNSTILE_SECRET_KEY: 'test-secret',
+    RESEND_API_KEY: 'test-resend',
+    EMAIL_FROM: 'Nexa Model <applications@nexa-model.com>',
+    PUBLIC_SITE_URL: 'https://nexa-model.com',
+    DB: {
+      prepare(sql) {
+        return {
+          bind() {
+            return {
+              async first() {
+                if (sql.includes('JOIN applicant_details')) return { application_id: 'pending-1', full_name: 'Pending Candidate', email: 'candidate@example.com', application_status: 'pending_upload' }
+                return null
+              },
+              async run() {
+                if (sql.includes('SET recovery_token_hash')) state.recoveryClaimed = true
+                return { meta: { changes: 1 } }
+              },
+            }
+          },
+        }
+      },
+    },
+  }
+  const response = await handleApplicationAccess(new Request('https://nexa-model.com/api/application-access', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'candidate@example.com', turnstile_token: 'verified-token' }),
+  }), env)
+  const body = await response.json()
+  assert.equal(response.status, 200)
+  assert.equal(body.already_submitted, false)
+  assert.equal(body.recovery_required, true)
+  assert.equal(state.recoveryClaimed, true)
+  assert.equal(state.emailCalls, 1)
+})
+
+test('valid recovery token replaces only the unfinished application', async (context) => {
+  const executedSql = []
+  context.mock.method(globalThis, 'fetch', async (url) => {
+    assert.match(String(url), /siteverify/)
+    return Response.json({ success: true })
+  })
+  const env = {
+    TURNSTILE_SECRET_KEY: 'test-secret',
+    DB: {
+      prepare(sql) {
+        return {
+          bind() {
+            return {
+              async first() {
+                if (sql.includes('JOIN applicant_details')) return { application_id: 'pending-1', application_status: 'pending_upload' }
+                return null
+              },
+              async all() { return { results: [] } },
+              async run() {
+                executedSql.push(sql)
+                return { meta: { changes: sql.includes('recovery_token_hash = ?') ? 1 : 0 } }
+              },
+            }
+          },
+        }
+      },
+      async batch(statements) {
+        assert.equal(statements.length, 3)
+        return statements.map(() => ({ meta: { changes: 1 } }))
+      },
+    },
+  }
+  const response = await handleApply(new Request('https://nexa-model.com/api/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-recovery-token' },
+    body: JSON.stringify({ answers: validAnswers(), turnstile_token: 'verified-token' }),
+  }), env)
+  const body = await response.json()
+  assert.equal(response.status, 201)
+  assert.equal(body.application_id, 'pending-1')
+  assert.ok(executedSql.some((sql) => sql.includes('recovery_token_hash = ?')))
 })
 
 test('requires a separate final Turnstile token before creating an application', async () => {
