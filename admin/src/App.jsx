@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, AlertTriangle, ArrowLeft, BarChart3, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, Database, Download, ExternalLink, Files, Image, ImageOff, LoaderCircle, LogIn, LogOut, Mail, MapPin, Menu, Moon, Phone, RefreshCw, Search, ShieldAlert, Sun, Tag, Trash2, Users, WifiOff, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { AlertCircle, AlertTriangle, ArrowLeft, BarChart3, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, Database, Download, ExternalLink, Files, Image, ImageOff, LoaderCircle, LogIn, LogOut, Mail, MapPin, Menu, MonitorCog, Moon, Phone, RefreshCw, Search, ShieldAlert, Sun, Tag, Trash2, Users, WifiOff, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { applicationSections, declarationFields, photoFields } from '../../src/applicationForm.js'
 
 const MALAYSIA_TIME_ZONE = 'Asia/Kuala_Lumpur'
@@ -226,8 +226,10 @@ function useDialogFocus(onClose, interactionLocked = false) {
 
 function Toast({ toast, onDismiss }) {
   if (!toast) return null
-  return <div className={`admin-toast toast-${toast.type}`} role={toast.type === 'error' ? 'alert' : 'status'} aria-live={toast.type === 'error' ? 'assertive' : 'polite'}>
-    <Check size={18} aria-hidden="true" />
+  const ToastIcon = toast.type === 'warning' ? AlertTriangle : ['danger', 'error'].includes(toast.type) ? ShieldAlert : Check
+  const urgent = ['danger', 'error'].includes(toast.type)
+  return <div className={`admin-toast toast-${toast.type}`} role={urgent ? 'alert' : 'status'} aria-live={urgent ? 'assertive' : 'polite'}>
+    <ToastIcon size={18} aria-hidden="true" />
     <span>{toast.message}</span>
     <button onClick={onDismiss} aria-label="Dismiss notification"><X size={16} /></button>
   </div>
@@ -654,6 +656,7 @@ function AdminSidebar({ activePage, collapsed, onNavigate, onToggle }) {
     <nav id="admin-sidebar-navigation" aria-label="Admin navigation">
       <button type="button" className="sidebar-toggle" aria-expanded={!collapsed} aria-controls="admin-sidebar-navigation" aria-label={collapsed ? 'Show sidebar' : 'Hide sidebar'} title={collapsed ? 'Show sidebar' : 'Hide sidebar'} onClick={onToggle}><Menu size={21} /></button>
       <a className={activePage === 'applications' ? 'active' : undefined} href="/" title={collapsed ? 'Applications' : undefined} aria-current={activePage === 'applications' ? 'page' : undefined} onClick={(event) => onNavigate(event, 'applications')}><Files size={20} /><span>Applications</span></a>
+      <a className={activePage === 'website-control' ? 'active' : undefined} href="/website-control" title={collapsed ? 'Website Control' : undefined} aria-current={activePage === 'website-control' ? 'page' : undefined} onClick={(event) => onNavigate(event, 'website-control')}><MonitorCog size={20} /><span>Website Control</span></a>
       <a className={activePage === 'analytics' ? 'active analytics-link' : 'analytics-link'} href="/analytics" title={collapsed ? 'Analytics' : undefined} aria-current={activePage === 'analytics' ? 'page' : undefined} onClick={(event) => onNavigate(event, 'analytics')}><BarChart3 size={20} /><span>Analytics</span></a>
     </nav>
   </aside>
@@ -741,8 +744,74 @@ function AnalyticsPage() {
   </div>
 }
 
+function WebsiteControlPage({ showToast }) {
+  const [applicationsClosed, setApplicationsClosed] = useState(false)
+  const [control, setControl] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  const loadControl = () => {
+    setLoading(true)
+    setError(null)
+    return api('/api/admin/website-control')
+      .then((data) => { setApplicationsClosed(Boolean(data.applications_closed)); setControl(data) })
+      .catch(setError)
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { loadControl() }, [])
+
+  async function updateControl() {
+    const nextClosed = !applicationsClosed
+    setSaving(true)
+    setError(null)
+    showToast(nextClosed ? 'Turning down the application page' : 'Restoring the application page', 'warning')
+    try {
+      const result = await api('/api/admin/website-control', {
+        method: 'PATCH', body: JSON.stringify({ applications_closed: nextClosed }),
+      })
+      setApplicationsClosed(Boolean(result.applications_closed))
+      setControl(result)
+      showToast(nextClosed ? 'Application page is currently turned down' : 'Application page is live and accepting applications', nextClosed ? 'danger' : 'success')
+    } catch (err) {
+      setError(err)
+      showToast(err.message || 'Website control could not be updated', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <div className="website-control-page">
+    <section className="page-heading"><div><p className="eyebrow">PUBLIC WEBSITE</p><h1>Website Control</h1><p>Control whether candidates can access and submit the Nexa Model application.</p></div></section>
+    {loading ? <div className="analytics-loading"><LoaderCircle className="spin" /> Loading website status…</div> : error && !control ? <ErrorState error={error} onRetry={loadControl} /> : <>
+      <section className={`website-control-panel${applicationsClosed ? ' is-closed' : ' is-live'}`}>
+        <div className="website-control-copy">
+          <span className="website-status"><i aria-hidden="true" />{applicationsClosed ? 'Applications closed' : 'Applications live'}</span>
+          <h2>{applicationsClosed ? 'The application page is turned down.' : 'The application page is available.'}</h2>
+          <p>{applicationsClosed ? 'Candidates are redirected to the closed landing page, and application API submissions are blocked.' : 'Candidates can open the form, upload photos and submit applications.'}</p>
+          {control?.updated_at && <small>Last changed {formatDate(control.updated_at)} MYT{control.updated_by ? ` by ${control.updated_by}` : ''}</small>}
+        </div>
+        <div className="website-control-action">
+          <span>{applicationsClosed ? 'Closed' : 'Open'}</span>
+          <button type="button" className="website-switch" role="switch" aria-checked={applicationsClosed} aria-label={applicationsClosed ? 'Reopen application page' : 'Close application page'} disabled={saving} onClick={updateControl}><i /><span className="sr-only">{applicationsClosed ? 'Reopen applications' : 'Close applications'}</span></button>
+          <small>{saving ? 'Verifying live website…' : applicationsClosed ? 'Switch off to reopen' : 'Switch on to close'}</small>
+        </div>
+      </section>
+      {error && <p className="website-control-error" role="alert">{error.message || error}</p>}
+      <a className="website-preview-link" href="https://nexa-model.com/apply" target="_blank" rel="noopener noreferrer"><ExternalLink size={17} /> Open application page</a>
+    </>}
+  </div>
+}
+
+function adminPageFromPath() {
+  if (window.location.pathname === '/analytics') return 'analytics'
+  if (window.location.pathname === '/website-control') return 'website-control'
+  return 'applications'
+}
+
 export default function App() {
-  const [activePage, setActivePage] = useState(() => window.location.pathname === '/analytics' ? 'analytics' : 'applications')
+  const [activePage, setActivePage] = useState(adminPageFromPath)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('nexa-admin-sidebar-collapsed') === 'true')
   const [applications, setApplications] = useState([])
   const [summary, setSummary] = useState(emptySummary)
@@ -834,8 +903,8 @@ export default function App() {
 
   useEffect(() => {
     const handlePopState = () => {
-      setActivePage(window.location.pathname === '/analytics' ? 'analytics' : 'applications')
-      if (window.location.pathname === '/analytics') setSelected(null)
+      setActivePage(adminPageFromPath())
+      if (window.location.pathname !== '/') setSelected(null)
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -860,7 +929,7 @@ export default function App() {
 
   function navigatePage(event, pageName) {
     event.preventDefault()
-    const nextPath = pageName === 'analytics' ? '/analytics' : '/'
+    const nextPath = pageName === 'analytics' ? '/analytics' : pageName === 'website-control' ? '/website-control' : '/'
     if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath)
     setActivePage(pageName)
     setSelected(null)
@@ -969,7 +1038,7 @@ export default function App() {
     <div className={`admin-layout${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
     <AdminSidebar activePage={activePage} collapsed={sidebarCollapsed} onNavigate={navigatePage} onToggle={toggleSidebar} />
     <main className={`admin-body${selected ? ' detail-page' : ''}`}>
-      {activePage === 'analytics' ? <AnalyticsPage /> : <>
+      {activePage === 'analytics' ? <AnalyticsPage /> : activePage === 'website-control' ? <WebsiteControlPage showToast={showToast} /> : <>
       {!selected && <>
         <section className="page-heading"><div><p className="eyebrow">NEXA TALENT DATABASE</p><h1>{deletedView ? 'Recently Deleted' : 'Applications'}</h1><p>{deletedView ? 'Applications remain recoverable for 30 days before permanent deletion.' : 'Review applicant information and photos in one place.'}</p></div><div className="result-meta">{lastUpdated && <small>Updated {formatDate(lastUpdated)}</small>}</div></section>
         <nav className="database-view-tabs" aria-label="Application database views">

@@ -4,7 +4,7 @@ import { Link } from '../router'
 import ThemeToggle from './ThemeToggle'
 import officialLogo from '../assets/images/official_logo_2Kpx.webp'
 
-export default function Navbar() {
+export default function Navbar({ applicationsClosed = false }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuButtonRef = useRef(null)
   const mobileNavRef = useRef(null)
@@ -66,9 +66,9 @@ export default function Navbar() {
       <div className="nav-actions">
         <ThemeToggle />
         <Link className="text-link" to="/login">Talent Login</Link>
-        <Link className="button button-dark" to="/apply">
+        {!applicationsClosed && <Link className="button button-dark" to="/apply">
           Apply Now <MoveUpRight size={16} />
-        </Link>
+        </Link>}
         <button
           ref={menuButtonRef}
           className="menu-button"
@@ -88,7 +88,7 @@ export default function Navbar() {
         <a href="#talents" onClick={closeMenu}>For Talents</a>
         <a href="#brands" onClick={closeMenu}>For Brands</a>
         <Link to="/login" onClick={closeMenu}>Talent Login</Link>
-        <Link className="mobile-nav-apply" to="/apply" onClick={closeMenu}>Apply Now <MoveUpRight size={18} /></Link>
+        {!applicationsClosed && <Link className="mobile-nav-apply" to="/apply" onClick={closeMenu}>Apply Now <MoveUpRight size={18} /></Link>}
       </nav>}
     </header>
   )

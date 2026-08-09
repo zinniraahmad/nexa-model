@@ -5,7 +5,17 @@ function normalizePath(pathname) {
   return pathname.replace(/\/+$/, '') || '/'
 }
 
+function requiresServerNavigation(to) {
+  const pathname = String(to ?? '').split(/[?#]/, 1)[0]
+  return normalizePath(pathname) === '/apply'
+}
+
 export function navigate(to, { replace = false } = {}) {
+  if (requiresServerNavigation(to)) {
+    window.location.assign(to)
+    return
+  }
+
   const target = normalizePath(to)
   const method = replace ? 'replaceState' : 'pushState'
   window.history[method]({}, '', target)
@@ -34,7 +44,8 @@ export function Link({ to, onClick, children, ...props }) {
       event.metaKey ||
       event.ctrlKey ||
       event.shiftKey ||
-      event.altKey
+      event.altKey ||
+      requiresServerNavigation(to)
     ) return
 
     event.preventDefault()

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { applicationSections, declarationFields, photoFields } from '../src/applicationForm.js'
-import { detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleRecoverApplication, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
+import publicWorker, { applicationsAreClosed, detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleRecoverApplication, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
 import { API_SECURITY_HEADERS, apiJson } from '../src/apiResponse.js'
 import { requireAdmin } from '../admin/access.js'
 import { buildShortlistedEmail, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded } from '../admin/worker.js'
@@ -92,6 +92,28 @@ test('mobile photo picker supports adding photos one at a time', () => {
   assert.match(application, /accept="image\/jpeg,image\/png"/)
   assert.match(application, /Clear selected photos/)
   assert.doesNotMatch(application, /click to replace/)
+})
+
+test('website control redirects the application page and blocks stale form submissions', async () => {
+  const router = readFileSync(new URL('../src/router.jsx', import.meta.url), 'utf8')
+  assert.match(router, /requiresServerNavigation\(to\)/)
+  assert.match(router, /normalizePath\(pathname\) === '\/apply'/)
+  assert.match(router, /window\.location\.assign\(to\)/)
+
+  const DB = {
+    prepare() {
+      return { async first() { return { enabled: 1 } } }
+    },
+  }
+  assert.equal(await applicationsAreClosed({ DB }), true)
+  const redirected = await publicWorker.fetch(new Request('https://nexa-model.com/apply'), { DB })
+  assert.equal(redirected.status, 302)
+  assert.equal(new URL(redirected.headers.get('Location')).pathname, '/applications-closed')
+  assert.match(redirected.headers.get('Cache-Control'), /no-store/)
+
+  const blocked = await publicWorker.fetch(new Request('https://nexa-model.com/api/apply', { method: 'POST' }), { DB })
+  assert.equal(blocked.status, 503)
+  assert.equal((await blocked.json()).code, 'APPLICATIONS_CLOSED')
 })
 
 function accessDatabase(existing) {

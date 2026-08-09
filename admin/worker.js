@@ -152,12 +152,87 @@ async function deleteImageKitFiles(env, fileIds) {
   if (results.some((deleted) => !deleted)) throw new Error('One or more ImageKit files could not be deleted.')
 }
 
+async function verifyApplicationPageState(env, applicationsClosed) {
+  const publicSiteUrl = env.PUBLIC_SITE_URL || 'https://nexa-model.com'
+  const checkUrl = new URL('/apply', publicSiteUrl)
+  checkUrl.searchParams.set('control_check', crypto.randomUUID())
+  const response = await fetch(checkUrl, {
+    method: 'GET',
+    redirect: 'manual',
+    headers: { 'Cache-Control': 'no-cache' },
+  })
+  const location = response.headers.get('Location')
+  const redirectedToClosed = response.status === 302
+    && location
+    && new URL(location, checkUrl).pathname === '/applications-closed'
+  return {
+    verified: applicationsClosed ? Boolean(redirectedToClosed) : response.ok && !redirectedToClosed,
+    http_status: response.status,
+    destination: location ? new URL(location, checkUrl).pathname : checkUrl.pathname,
+  }
+}
+
 async function handleApi(request, env, url, authenticate = requireAdmin) {
   const auth = await authenticate(request, env)
   if (auth.error) return auth.error
 
   if (url.pathname === '/api/admin/session' && request.method === 'GET') {
     return apiJson({ email: auth.email })
+  }
+
+  if (url.pathname === '/api/admin/website-control' && request.method === 'GET') {
+    const control = await env.DB.prepare(`
+      SELECT enabled, updated_at, updated_by
+      FROM website_controls WHERE control_key = 'applications_closed'
+    `).first()
+    return apiJson({
+      applications_closed: Number(control?.enabled || 0) === 1,
+      updated_at: control?.updated_at || null,
+      updated_by: control?.updated_by || null,
+    })
+  }
+
+  if (url.pathname === '/api/admin/website-control' && request.method === 'PATCH') {
+    const body = await request.json().catch(() => null)
+    if (typeof body?.applications_closed !== 'boolean') {
+      return apiJson({ error: 'Choose whether applications should be open or closed.', code: 'VALIDATION_ERROR' }, { status: 400 })
+    }
+    const existing = await env.DB.prepare(`
+      SELECT enabled FROM website_controls WHERE control_key = 'applications_closed'
+    `).first()
+    const previousEnabled = Number(existing?.enabled || 0)
+    const nextEnabled = body.applications_closed ? 1 : 0
+    const updatedAt = new Date().toISOString()
+    await env.DB.prepare(`
+      INSERT INTO website_controls (control_key, enabled, updated_at, updated_by)
+      VALUES ('applications_closed', ?, ?, ?)
+      ON CONFLICT(control_key) DO UPDATE SET
+        enabled = excluded.enabled, updated_at = excluded.updated_at, updated_by = excluded.updated_by
+    `).bind(nextEnabled, updatedAt, auth.email).run()
+
+    let verification
+    try {
+      verification = await verifyApplicationPageState(env, body.applications_closed)
+    } catch (error) {
+      logError('website_control.verification_failed', { applicationsClosed: body.applications_closed }, error)
+    }
+    if (!verification?.verified) {
+      await env.DB.prepare(`
+        UPDATE website_controls SET enabled = ?, updated_at = ?, updated_by = ?
+        WHERE control_key = 'applications_closed'
+      `).bind(previousEnabled, new Date().toISOString(), auth.email).run()
+      return apiJson({
+        error: 'The website state could not be verified. The previous setting was restored.',
+        code: 'WEBSITE_CONTROL_VERIFICATION_FAILED',
+      }, { status: 502 })
+    }
+    return apiJson({
+      success: true,
+      applications_closed: body.applications_closed,
+      updated_at: updatedAt,
+      updated_by: auth.email,
+      verification,
+    })
   }
 
   if (url.pathname === '/api/admin/analytics' && request.method === 'GET') {
@@ -621,4 +696,4 @@ export default {
   },
 }
 
-export { ADMIN_PAGE_SIZE, buildShortlistedEmail, enforceAdminRateLimit, handleApi, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded, signPhotoUrls }
+export { ADMIN_PAGE_SIZE, buildShortlistedEmail, enforceAdminRateLimit, handleApi, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded, signPhotoUrls, verifyApplicationPageState }

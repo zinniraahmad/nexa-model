@@ -11,7 +11,8 @@ const MAX_ACCESS_REQUEST_BYTES = 4 * 1024
 const MAX_APPLY_REQUEST_BYTES = 120 * 1024
 const MAX_FINALIZE_REQUEST_BYTES = 4 * 1024
 const MAX_MULTIPART_REQUEST_BYTES = (10 * 1024 * 1024) + (64 * 1024)
-const SPA_PATHS = new Set(['/', '/login', '/portal', '/apply', '/privacy'])
+const SPA_PATHS = new Set(['/', '/login', '/portal', '/apply', '/applications-closed', '/privacy'])
+const APPLICATION_API_PATHS = new Set(['/api/application-access', '/api/recover', '/api/apply', '/api/upload', '/api/finalize'])
 const IMAGE_SIGNATURES = [
   { mime: 'image/png', test: (bytes) => bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a },
   { mime: 'image/jpeg', test: (bytes) => bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff },
@@ -117,6 +118,34 @@ async function handleStaticRequest(request, env, url) {
   const asset = await env.ASSETS.fetch(request)
   if (asset.status !== 404 || !['GET', 'HEAD'].includes(request.method)) return asset
   return notFoundPage()
+}
+
+async function applicationsAreClosed(env) {
+  if (!env.DB) return false
+  const control = await env.DB.prepare(`
+    SELECT enabled FROM website_controls WHERE control_key = 'applications_closed'
+  `).first()
+  return Number(control?.enabled || 0) === 1
+}
+
+function applicationRouteRedirect(request, pathname) {
+  const location = new URL(pathname, request.url)
+  return new Response(null, {
+    status: 302,
+    headers: {
+      ...API_SECURITY_HEADERS,
+      Location: location.toString(),
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'X-Robots-Tag': 'noindex',
+    },
+  })
+}
+
+function applicationsClosedResponse() {
+  return json({ success: false, error: 'Applications are currently closed.', code: 'APPLICATIONS_CLOSED' }, {
+    status: 503,
+    headers: { 'Retry-After': '3600' },
+  })
 }
 
 function applicationCredentialRequired() {
@@ -784,9 +813,15 @@ async function handleFinalize(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
+    if (['GET', 'HEAD'].includes(request.method) && (url.pathname === '/apply' || url.pathname === '/applications-closed')) {
+      const closed = await applicationsAreClosed(env)
+      if (url.pathname === '/apply' && closed) return applicationRouteRedirect(request, '/applications-closed')
+      if (url.pathname === '/applications-closed' && !closed) return applicationRouteRedirect(request, '/apply')
+    }
     if (url.pathname === '/api/config' && request.method === 'GET') {
       return json({ turnstile_site_key: env.TURNSTILE_SITE_KEY || '' })
     }
+    if (APPLICATION_API_PATHS.has(url.pathname) && await applicationsAreClosed(env)) return applicationsClosedResponse()
     if (url.pathname === '/api/application-access' && request.method === 'POST') return handleApplicationAccess(request, env)
     if (url.pathname === '/api/recover' && request.method === 'POST') return handleRecoverApplication(request, env)
     if (url.pathname === '/api/apply' && request.method === 'POST') return handleApply(request, env)
@@ -797,4 +832,4 @@ export default {
   },
 }
 
-export { applicationAccessAccepted, applicationAlreadySubmitted, applicationCredentialRequired, detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleRecoverApplication, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers }
+export { applicationAccessAccepted, applicationAlreadySubmitted, applicationCredentialRequired, applicationsAreClosed, detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleRecoverApplication, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers }

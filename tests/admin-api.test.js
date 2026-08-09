@@ -58,6 +58,7 @@ function createTestDatabase() {
   `)
   database.exec(readFileSync(new URL('../migrations/0016_admin_security_operations.sql', import.meta.url), 'utf8'))
   database.exec(readFileSync(new URL('../migrations/0017_email_analytics.sql', import.meta.url), 'utf8'))
+  database.exec(readFileSync(new URL('../migrations/0018_website_controls.sql', import.meta.url), 'utf8'))
   database.exec(`
     INSERT INTO applicants (application_id, full_name, email, phone, current_location)
     VALUES
@@ -145,6 +146,33 @@ test('admin analytics endpoint returns complete date ranges and email usage meta
   assert.equal(body.quota.daily_quota_used, 4)
   assert.equal(body.quota.monthly_quota_used, 19)
   assert.equal(body.email_types[0].message_type, 'candidate_receipt')
+})
+
+test('website control closes applications only after the public redirect is verified', async (context) => {
+  const DB = createTestDatabase()
+  context.mock.method(globalThis, 'fetch', async () => new Response(null, {
+    status: 302, headers: { Location: 'https://nexa-model.com/applications-closed' },
+  }))
+  const response = await callApi({ DB, PUBLIC_SITE_URL: 'https://nexa-model.com' }, '/api/admin/website-control', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ applications_closed: true }),
+  })
+  const body = await response.json()
+  assert.equal(response.status, 200)
+  assert.equal(body.applications_closed, true)
+  assert.equal(body.verification.destination, '/applications-closed')
+  assert.equal(DB.raw.prepare("SELECT enabled FROM website_controls WHERE control_key = 'applications_closed'").get().enabled, 1)
+})
+
+test('website control rolls back when the public state cannot be verified', async (context) => {
+  const DB = createTestDatabase()
+  context.mock.method(globalThis, 'fetch', async () => new Response('unexpected', { status: 200 }))
+  const response = await callApi({ DB, PUBLIC_SITE_URL: 'https://nexa-model.com' }, '/api/admin/website-control', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ applications_closed: true }),
+  })
+  assert.equal(response.status, 502)
+  assert.equal(DB.raw.prepare("SELECT enabled FROM website_controls WHERE control_key = 'applications_closed'").get().enabled, 0)
 })
 
 test('admin photo response provides expiring original and transformed thumbnail URLs', () => {

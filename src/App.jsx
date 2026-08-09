@@ -4,12 +4,14 @@ import Login from './pages/Login'
 import Apply from './pages/TalentApplication'
 import Privacy from './pages/Privacy'
 import NotFound from './pages/NotFound'
+import ApplicationsClosed from './pages/ApplicationsClosed'
 import { usePathname } from './router'
 
 const SITE_URL = 'https://nexa-model.com'
 const pageMetadata = {
   '/': { title: 'Nexa Model — Talent in Motion', description: 'Nexa Model connects activewear brands with modern movement talent.' },
   '/apply': { title: 'Apply | Nexa Model', description: 'Apply to Nexa Model through a secure talent application.' },
+  '/applications-closed': { title: 'Applications closed | Nexa Model', description: 'Nexa Model applications are currently closed.' },
   '/privacy': { title: 'Privacy Notice | Nexa Model', description: 'Read the Nexa Model Privacy Notice.' },
   '/login': { title: 'Login unavailable | Nexa Model', description: 'Nexa Model login is currently unavailable while development continues.' },
   '/portal': { title: 'Login unavailable | Nexa Model', description: 'Nexa Model login is currently unavailable while development continues.' },
@@ -40,6 +42,7 @@ export default function App() {
   let page
   if (pathname === '/login' || pathname === '/portal') page = <Login />
   else if (pathname === '/apply') page = <Apply />
+  else if (pathname === '/applications-closed') page = <ApplicationsClosed />
   else if (pathname === '/privacy') page = <Privacy />
   else if (pathname === '/') page = <Home />
   else page = <NotFound />

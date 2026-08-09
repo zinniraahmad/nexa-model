@@ -573,3 +573,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .not-found-content h1 { margin: 22px 0; font-size: clamp(58px, 9vw, 118px); }
 .not-found-content p { max-width: 520px; color: var(--muted); line-height: 1.7; }
 .not-found-content .button { margin-top: 22px; }
+.applications-closed-page { min-height: 100vh; background: var(--paper); }
+.applications-closed-content { width: min(880px, calc(100% - 40px)); min-height: calc(100vh - 84px); display: flex; flex-direction: column; align-items: center; justify-content: center; margin: 0 auto; padding: 70px 0 100px; text-align: center; }
+.applications-closed-icon { width: 64px; height: 64px; display: grid; place-items: center; margin-bottom: 28px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); background: var(--surface); }
+.applications-closed-icon svg { width: 27px; height: 27px; }
+.applications-closed-content h1 { max-width: 800px; margin: 18px 0 16px; font-size: clamp(48px, 7vw, 94px); line-height: .98; letter-spacing: -.055em; }
+.applications-closed-content > p:not(.section-label) { margin: 0; color: var(--muted); font-size: clamp(18px, 2vw, 24px); }
+.applications-closed-content .button { margin-top: 34px; }
