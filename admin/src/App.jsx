@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, Database, Download, ExternalLink, Image, ImageOff, LoaderCircle, LogIn, LogOut, Mail, MapPin, Moon, Phone, RefreshCw, Search, ShieldAlert, Sun, Tag, Trash2, Users, WifiOff, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { AlertCircle, AlertTriangle, ArrowLeft, BarChart3, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, Database, Download, ExternalLink, Files, Image, ImageOff, LoaderCircle, LogIn, LogOut, Mail, MapPin, Menu, Moon, Phone, RefreshCw, Search, ShieldAlert, Sun, Tag, Trash2, Users, WifiOff, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { applicationSections, declarationFields, photoFields } from '../../src/applicationForm.js'
 
 const MALAYSIA_TIME_ZONE = 'Asia/Kuala_Lumpur'
@@ -30,6 +30,11 @@ function formatDate(value) {
   if (!value) return '—'
   const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value.replace(' ', 'T')}Z`
   return new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', timeStyle: 'short', timeZone: MALAYSIA_TIME_ZONE }).format(new Date(normalized))
+}
+
+function formatDay(value) {
+  if (!value) return '—'
+  return new Intl.DateTimeFormat('en-MY', { day: 'numeric', month: 'short', timeZone: MALAYSIA_TIME_ZONE }).format(new Date(`${value}T12:00:00+08:00`))
 }
 
 function initialParam(name, fallback = '') {
@@ -637,7 +642,108 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
   </>
 }
 
+const emailTypeLabels = {
+  candidate_receipt: 'Candidate receipts',
+  admin_notification: 'Admin notifications',
+  pending_recovery: 'Recovery emails',
+  candidate_shortlisted: 'Shortlist emails',
+}
+
+function AdminSidebar({ activePage, collapsed, onNavigate, onToggle }) {
+  return <aside className="admin-sidebar">
+    <nav id="admin-sidebar-navigation" aria-label="Admin navigation">
+      <button type="button" className="sidebar-toggle" aria-expanded={!collapsed} aria-controls="admin-sidebar-navigation" aria-label={collapsed ? 'Show sidebar' : 'Hide sidebar'} title={collapsed ? 'Show sidebar' : 'Hide sidebar'} onClick={onToggle}><Menu size={21} /></button>
+      <a className={activePage === 'applications' ? 'active' : undefined} href="/" title={collapsed ? 'Applications' : undefined} aria-current={activePage === 'applications' ? 'page' : undefined} onClick={(event) => onNavigate(event, 'applications')}><Files size={20} /><span>Applications</span></a>
+      <a className={activePage === 'analytics' ? 'active analytics-link' : 'analytics-link'} href="/analytics" title={collapsed ? 'Analytics' : undefined} aria-current={activePage === 'analytics' ? 'page' : undefined} onClick={(event) => onNavigate(event, 'analytics')}><BarChart3 size={20} /><span>Analytics</span></a>
+    </nav>
+  </aside>
+}
+
+function MetricCard({ label, value, detail, tone }) {
+  return <article className={`analytics-metric${tone ? ` ${tone}` : ''}`}>
+    <span>{label}</span><strong>{value}</strong><small>{detail}</small>
+  </article>
+}
+
+function QuotaProgress({ label, used, limit }) {
+  const available = Number.isFinite(Number(used))
+  const numericUsed = available ? Number(used) : 0
+  const percentage = Math.min(100, Math.max(0, (numericUsed / limit) * 100))
+  const warning = percentage >= 85 ? ' danger' : percentage >= 70 ? ' warning' : ''
+  return <div className="quota-row">
+    <div><span>{label}</span><strong>{available ? `${numericUsed.toLocaleString()} / ${limit.toLocaleString()}` : 'Waiting for data'}</strong></div>
+    <div className={`quota-track${warning}`} role="progressbar" aria-label={`${label} Resend quota`} aria-valuemin="0" aria-valuemax={limit} aria-valuenow={available ? numericUsed : 0}><i style={{ width: `${percentage}%` }} /></div>
+  </div>
+}
+
+function TrendBars({ rows, valueKey = 'count', secondaryKey, emptyLabel }) {
+  const max = Math.max(1, ...rows.map((row) => Number(row[valueKey] || 0) + Number(secondaryKey ? row[secondaryKey] || 0 : 0)))
+  const hasData = rows.some((row) => Number(row[valueKey] || 0) + Number(secondaryKey ? row[secondaryKey] || 0 : 0) > 0)
+  if (!hasData) return <div className="analytics-empty"><BarChart3 size={24} /><span>{emptyLabel}</span></div>
+  return <div className="trend-scroll"><div className="trend-bars" style={{ '--trend-columns': rows.length }}>
+    {rows.map((row, index) => {
+      const primary = Number(row[valueKey] || 0)
+      const secondary = Number(secondaryKey ? row[secondaryKey] || 0 : 0)
+      return <div className="trend-column" key={row.day} title={`${formatDay(row.day)}: ${primary}${secondaryKey ? ` accepted, ${secondary} failed` : ''}`}>
+        <div className="trend-stack">
+          {secondaryKey && secondary > 0 && <i className="trend-failed" style={{ height: `${(secondary / max) * 100}%` }} />}
+          <i style={{ height: `${(primary / max) * 100}%` }} />
+        </div>
+        {(index === 0 || index === rows.length - 1 || (rows.length <= 30 && index % 7 === 0)) && <span>{formatDay(row.day)}</span>}
+      </div>
+    })}
+  </div></div>
+}
+
+function AnalyticsPage() {
+  const [days, setDays] = useState(30)
+  const [reloadKey, setReloadKey] = useState(0)
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setLoading(true)
+    setError(null)
+    api(`/api/admin/analytics?days=${days}`, { signal: controller.signal })
+      .then(setData)
+      .catch((err) => { if (err?.name !== 'AbortError') setError(err) })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
+  }, [days, reloadKey])
+
+  if (error) return <div className="analytics-page"><section className="page-heading"><div><p className="eyebrow">ADMIN INSIGHTS</p><h1>Analytics</h1></div></section><ErrorState error={error} onRetry={() => setReloadKey((current) => current + 1)} /></div>
+  const applications = data?.application_summary || {}
+  const emails = data?.email_summary || {}
+  const acceptanceRate = emails.attempts ? `${Math.round((emails.accepted / emails.attempts) * 100)}%` : '—'
+
+  return <div className="analytics-page">
+    <section className="page-heading analytics-heading"><div><p className="eyebrow">ADMIN INSIGHTS</p><h1>Analytics</h1><p>Application activity and Resend operational usage in one place.</p></div><label>Range<select value={days} onChange={(event) => setDays(Number(event.target.value))}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label></section>
+    {loading && !data ? <div className="analytics-loading"><LoaderCircle className="spin" /> Loading analytics…</div> : <>
+      <section className="analytics-metrics" aria-label="Analytics summary">
+        <MetricCard label="Applications" value={applications.period_total || 0} detail={`Submitted in the last ${days} days`} />
+        <MetricCard label="Pending uploads" value={applications.pending_upload || 0} detail="Saved applications not finalized" tone={applications.pending_upload ? 'attention' : ''} />
+        <MetricCard label="Email accepted" value={emails.accepted || 0} detail="Accepted by Resend, not delivery confirmation" />
+        <MetricCard label="Acceptance rate" value={acceptanceRate} detail={`${emails.failed || 0} failed API attempt${emails.failed === 1 ? '' : 's'}`} tone={emails.failed ? 'attention' : ''} />
+      </section>
+
+      <section className="analytics-grid">
+        <article className="analytics-panel trend-panel"><div className="analytics-panel-heading"><div><p className="eyebrow">APPLICATIONS</p><h2>Submission trend</h2></div><strong>{applications.total || 0}<span> all time</span></strong></div><TrendBars rows={data?.application_trend || []} emptyLabel="No submitted applications in this range." /></article>
+        <article className="analytics-panel quota-panel"><div className="analytics-panel-heading"><div><p className="eyebrow">RESEND FREE</p><h2>Quota usage</h2></div></div><QuotaProgress label="Daily usage" used={data?.quota?.daily_quota_used} limit={100} /><QuotaProgress label="Monthly usage" used={data?.quota?.monthly_quota_used} limit={3000} /><p className="analytics-note">Captured from Resend response headers. {data?.quota?.attempted_at ? `Last updated ${formatDate(data.quota.attempted_at)} MYT.` : 'The first snapshot will appear after the next email attempt.'}</p></article>
+        <article className="analytics-panel trend-panel"><div className="analytics-panel-heading"><div><p className="eyebrow">EMAIL ACTIVITY</p><h2>Resend attempts</h2></div><div className="chart-legend"><span><i />Accepted</span><span><i className="failed" />Failed</span></div></div><TrendBars rows={data?.email_trend || []} valueKey="accepted" secondaryKey="failed" emptyLabel="Email tracking has no activity in this range yet." /></article>
+        <article className="analytics-panel email-types-panel"><div className="analytics-panel-heading"><div><p className="eyebrow">BREAKDOWN</p><h2>Email types</h2></div></div>{data?.email_types?.length ? <ul>{data.email_types.map((row) => <li key={row.message_type}><span>{emailTypeLabels[row.message_type] || row.message_type}</span><strong>{row.accepted}<small> accepted</small></strong>{row.failed > 0 && <em>{row.failed} failed</em>}</li>)}</ul> : <div className="analytics-empty compact"><Mail size={22} /><span>No tracked emails yet.</span></div>}</article>
+      </section>
+
+      <section className="analytics-panel failures-panel"><div className="analytics-panel-heading"><div><p className="eyebrow">OPERATIONS</p><h2>Recent email failures</h2></div></div>{data?.recent_failures?.length ? <div className="failure-table"><div className="failure-row failure-header"><span>Type</span><span>Application</span><span>Error</span><span>Time</span></div>{data.recent_failures.map((row, index) => <div className="failure-row" key={`${row.attempted_at}-${index}`}><span>{emailTypeLabels[row.message_type] || row.message_type}</span><code>{row.application_id || '—'}</code><span>{row.failure_code || `HTTP ${row.provider_http_status || 'error'}`}</span><time>{formatDate(row.attempted_at)}</time></div>)}</div> : <div className="analytics-empty compact"><Check size={22} /><span>No recorded email failures.</span></div>}</section>
+      <p className="analytics-footnote">Email analytics starts from {data?.tracking_since ? `${formatDate(data.tracking_since)} MYT` : 'the first tracked send after deployment'}. Existing email timestamps are not labelled as delivery events.</p>
+    </>}
+  </div>
+}
+
 export default function App() {
+  const [activePage, setActivePage] = useState(() => window.location.pathname === '/analytics' ? 'analytics' : 'applications')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('nexa-admin-sidebar-collapsed') === 'true')
   const [applications, setApplications] = useState([])
   const [summary, setSummary] = useState(emptySummary)
   const [pagination, setPagination] = useState(emptyPagination)
@@ -710,19 +816,30 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (activePage !== 'applications') return undefined
     const controller = new AbortController()
     const requestId = ++loadRequestRef.current
     setLoading(true)
     setError(null)
     const timer = setTimeout(() => loadApplications({ signal: controller.signal, requestId }), 350)
     return () => { clearTimeout(timer); controller.abort() }
-  }, [query])
+  }, [query, activePage])
 
   useEffect(() => {
+    if (activePage !== 'applications') return
     const params = new URLSearchParams(query)
     if (selected) params.set('application', selected)
     window.history.replaceState(null, '', `${window.location.pathname}?${params}`)
-  }, [query, selected])
+  }, [query, selected, activePage])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setActivePage(window.location.pathname === '/analytics' ? 'analytics' : 'applications')
+      if (window.location.pathname === '/analytics') setSelected(null)
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
 
   useEffect(() => { api('/api/admin/session').then((data) => setEmail(data.email)).catch(() => {}) }, [])
 
@@ -731,6 +848,23 @@ export default function App() {
     document.documentElement.dataset.theme = nextTheme
     localStorage.setItem('nexa-admin-theme-v2', nextTheme)
     setTheme(nextTheme)
+  }
+
+  function toggleSidebar() {
+    setSidebarCollapsed((current) => {
+      const next = !current
+      localStorage.setItem('nexa-admin-sidebar-collapsed', String(next))
+      return next
+    })
+  }
+
+  function navigatePage(event, pageName) {
+    event.preventDefault()
+    const nextPath = pageName === 'analytics' ? '/analytics' : '/'
+    if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath)
+    setActivePage(pageName)
+    setSelected(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   function selectApplication(applicationId) {
@@ -832,7 +966,10 @@ export default function App() {
 
   return <div className="admin-shell">
     <header className="admin-header"><div><span className="wordmark">NEXA MODEL</span><span className="admin-label">ADMIN</span></div><div className="account"><span>{email}</span><button className="theme-button" onClick={toggleTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>{theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}</button><a href="/cdn-cgi/access/logout" title="Sign out"><LogOut size={17} /></a></div></header>
-    <div className={`admin-body${selected ? ' detail-page' : ''}`}>
+    <div className={`admin-layout${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
+    <AdminSidebar activePage={activePage} collapsed={sidebarCollapsed} onNavigate={navigatePage} onToggle={toggleSidebar} />
+    <main className={`admin-body${selected ? ' detail-page' : ''}`}>
+      {activePage === 'analytics' ? <AnalyticsPage /> : <>
       {!selected && <>
         <section className="page-heading"><div><p className="eyebrow">NEXA TALENT DATABASE</p><h1>{deletedView ? 'Recently Deleted' : 'Applications'}</h1><p>{deletedView ? 'Applications remain recoverable for 30 days before permanent deletion.' : 'Review applicant information and photos in one place.'}</p></div><div className="result-meta">{lastUpdated && <small>Updated {formatDate(lastUpdated)}</small>}</div></section>
         <nav className="database-view-tabs" aria-label="Application database views">
@@ -871,6 +1008,8 @@ export default function App() {
         </nav>}
       </>}
       {selected && <Detail applicationId={selected} previousId={previousId} nextId={nextId} onBack={() => setSelected(null)} onNavigate={selectApplication} onUpdated={loadApplications} onToast={showToast} />}
+      </>}
+    </main>
     </div>
     {deleteTarget && <DeleteDialog application={deleteTarget.application} deletionType={deleteTarget.deletionType} deleting={deleting} error={deleteError} onCancel={() => setDeleteTarget(null)} onConfirm={deleteApplication} />}
     {restoreTarget && <RestoreDialog application={restoreTarget} restoring={restoringId === restoreTarget.application_id} error={restoreError} onCancel={() => { if (!restoringId) { setRestoreTarget(null); setRestoreError(null) } }} onConfirm={() => restoreApplication(restoreTarget)} />}

@@ -1,5 +1,6 @@
 import { applicationSections, declarationFields, photoFields } from './applicationForm.js'
 import { API_SECURITY_HEADERS, apiJson as json } from './apiResponse.js'
+import { trackResendNetworkFailure, trackResendResponse } from './emailAnalytics.js'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
 const UPLOAD_TOKEN_TTL_MS = 60 * 60 * 1000
@@ -220,7 +221,9 @@ async function sendSubmissionReceiptEmail(env, applicant) {
   const replyTo = env.EMAIL_REPLY_TO || 'hello@nexa-model.com'
   const subject = `Nexa Model application submitted — ${applicant.application_id}`
   const text = `Hi ${applicant.full_name},\n\nYour Nexa Model application and photos were submitted successfully. Your reference is ${applicant.application_id}. Submission does not guarantee shortlisting or training completion. If shortlisted, Nexa Model will contact you through WhatsApp.\n\nPermohonan dan gambar anda telah berjaya dihantar kepada Nexa Model. Rujukan anda ialah ${applicant.application_id}. Permohonan ini tidak menjamin pemilihan atau tamat latihan. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.\n\nPrivacy enquiries / Pertanyaan privasi: ${replyTo}`
-  const response = await fetch('https://api.resend.com/emails', {
+  let response
+  try {
+    response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.RESEND_API_KEY}`,
@@ -235,9 +238,14 @@ async function sendSubmissionReceiptEmail(env, applicant) {
       text,
       html: `<p>Hi ${escapeHtml(applicant.full_name)},</p><p>Your Nexa Model application and photos were <strong>submitted successfully</strong>.</p><p><strong>Reference: ${escapeHtml(applicant.application_id)}</strong></p><p>Submission does not guarantee shortlisting, training completion or an assignment. If shortlisted, Nexa Model will contact you through WhatsApp.</p><hr><p>Permohonan dan gambar Nexa Model anda telah <strong>berjaya dihantar</strong>.</p><p><strong>Rujukan: ${escapeHtml(applicant.application_id)}</strong></p><p>Penghantaran tidak menjamin pemilihan, tamat latihan atau tugasan. Jika disenarai pendek, Nexa Model akan menghubungi anda melalui WhatsApp.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
     }),
-  })
+    })
+  } catch (error) {
+    await trackResendNetworkFailure(env, { applicationId: applicant.application_id, messageType: 'candidate_receipt', recipientType: 'candidate' })
+    throw error
+  }
+  const tracked = await trackResendResponse(env, response, { applicationId: applicant.application_id, messageType: 'candidate_receipt', recipientType: 'candidate' })
   if (!response.ok) console.error('provider.resend_request_failed', { messageType: 'candidate_receipt', status: response.status })
-  return response.ok
+  return tracked.ok
 }
 
 function singleLineEmailValue(value, maxLength = 120) {
@@ -266,7 +274,9 @@ async function sendAdminSubmissionNotification(env, applicant) {
   const applicationId = singleLineEmailValue(applicant.application_id)
   const subject = `New Nexa Model application — ${preferredName} (${applicationId})`
   const text = `Hi Admin,\n\nA new application has been submitted to Nexa Model.\n\nApplication details:\n\nFull Name: ${fullName}\nPreferred Name: ${preferredName}\nAge: ${age}\nCurrent Location: ${location}\nApplication ID: ${applicationId}\nSubmitted At: ${submittedAt} UTC\n\nReview the application securely:\n${adminPortalUrl}\n\nPlease do not forward this email or applicant information.`
-  const response = await fetch('https://api.resend.com/emails', {
+  let response
+  try {
+    response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.RESEND_API_KEY}`,
@@ -281,9 +291,14 @@ async function sendAdminSubmissionNotification(env, applicant) {
       text,
       html: `<p>Hi Admin,</p><p>A new application has been submitted to Nexa Model.</p><h3>Application details</h3><p><strong>Full Name:</strong> ${escapeHtml(fullName)}<br><strong>Preferred Name:</strong> ${escapeHtml(preferredName)}<br><strong>Age:</strong> ${escapeHtml(age)}<br><strong>Current Location:</strong> ${escapeHtml(location)}<br><strong>Application ID:</strong> ${escapeHtml(applicationId)}<br><strong>Submitted At:</strong> ${escapeHtml(submittedAt)} UTC</p><p><a href="${escapeHtml(adminPortalUrl)}">Review the application securely</a></p><p><small>Please do not forward this email or applicant information.</small></p>`,
     }),
-  })
+    })
+  } catch (error) {
+    await trackResendNetworkFailure(env, { applicationId: applicant.application_id, messageType: 'admin_notification', recipientType: 'admin' })
+    throw error
+  }
+  const tracked = await trackResendResponse(env, response, { applicationId: applicant.application_id, messageType: 'admin_notification', recipientType: 'admin' })
   if (!response.ok) console.error('provider.resend_request_failed', { messageType: 'admin_notification', status: response.status })
-  return response.ok
+  return tracked.ok
 }
 
 async function ensurePendingRecoveryEmail(request, env, applicant) {
@@ -325,9 +340,11 @@ async function ensurePendingRecoveryEmail(request, env, applicant) {
         html: `<p>Hi ${escapeHtml(applicant.full_name)},</p><p>Your previous Nexa Model photo upload did not finish. Your saved answers and uploaded photos are still available.</p><p><a href="${escapeHtml(recoveryUrl.toString())}">Continue with the missing photos</a></p><p>This secure single-use link expires in 60 minutes. If you did not request this, ignore this email.</p><hr><p>Muat naik gambar permohonan Nexa Model anda sebelum ini belum selesai. Jawapan dan gambar yang telah dimuat naik masih disimpan.</p><p><a href="${escapeHtml(recoveryUrl.toString())}">Teruskan dengan gambar yang belum lengkap</a></p><p>Pautan selamat sekali guna ini tamat tempoh dalam masa 60 minit. Jika anda tidak membuat permintaan ini, abaikan e-mel ini.</p><p><small>Privacy enquiries / Pertanyaan privasi: ${escapeHtml(replyTo)}</small></p>`,
       }),
     })
-    if (response.ok) return true
+    const tracked = await trackResendResponse(env, response, { applicationId: applicant.application_id, messageType: 'pending_recovery', recipientType: 'candidate' })
+    if (tracked.ok) return true
     console.error('provider.resend_request_failed', { messageType: 'pending_recovery', status: response.status })
   } catch (error) {
+    await trackResendNetworkFailure(env, { applicationId: applicant.application_id, messageType: 'pending_recovery', recipientType: 'candidate' })
     console.error('Pending recovery email failed', { applicationId: applicant.application_id, error })
   }
 

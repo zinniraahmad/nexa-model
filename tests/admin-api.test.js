@@ -57,6 +57,7 @@ function createTestDatabase() {
     );
   `)
   database.exec(readFileSync(new URL('../migrations/0016_admin_security_operations.sql', import.meta.url), 'utf8'))
+  database.exec(readFileSync(new URL('../migrations/0017_email_analytics.sql', import.meta.url), 'utf8'))
   database.exec(`
     INSERT INTO applicants (application_id, full_name, email, phone, current_location)
     VALUES
@@ -123,6 +124,27 @@ test('admin list endpoint enforces fixed server-side pagination', async () => {
   assert.equal(ADMIN_PAGE_SIZE, 50)
   assert.equal(body.applications.length, 5)
   assert.deepEqual(body.pagination, { page: 2, page_size: 50, total: 55, total_pages: 2, has_previous: true, has_next: false })
+})
+
+test('admin analytics endpoint returns complete date ranges and email usage metadata', async () => {
+  const DB = createTestDatabase()
+  DB.raw.prepare(`
+    INSERT INTO email_messages (
+      resend_email_id, application_id, message_type, recipient_type, status,
+      provider_http_status, daily_quota_used, monthly_quota_used, attempted_at, accepted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).run('resend-test-1', 'app-alice', 'candidate_receipt', 'candidate', 'accepted', 200, 4, 19)
+
+  const response = await callApi({ DB }, '/api/admin/analytics?days=7')
+  const body = await response.json()
+  assert.equal(response.status, 200)
+  assert.equal(body.range_days, 7)
+  assert.equal(body.application_trend.length, 7)
+  assert.equal(body.email_trend.length, 7)
+  assert.equal(body.email_summary.accepted, 1)
+  assert.equal(body.quota.daily_quota_used, 4)
+  assert.equal(body.quota.monthly_quota_used, 19)
+  assert.equal(body.email_types[0].message_type, 'candidate_receipt')
 })
 
 test('admin photo response provides expiring original and transformed thumbnail URLs', () => {

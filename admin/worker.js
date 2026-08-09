@@ -2,6 +2,7 @@ import { requireAdmin } from './access.js'
 import ImageKit from '@imagekit/nodejs'
 import { apiJson } from '../src/apiResponse.js'
 import { logError, recordOperationalFailure } from './observability.js'
+import { trackResendNetworkFailure, trackResendResponse } from '../src/emailAnalytics.js'
 
 const STATUSES = ['submitted', 'reviewing', 'shortlisted', 'contacted', 'rejected']
 const SOFT_DELETE_DAYS = 30
@@ -101,17 +102,18 @@ async function sendShortlistedEmail(env, applicant) {
       }),
     })
   } catch (error) {
+    await trackResendNetworkFailure(env, { applicationId: applicant.application_id, messageType: 'candidate_shortlisted', recipientType: 'candidate' })
     logError('provider.resend_network_failed', { messageType: 'candidate_shortlisted' }, error)
     await recordOperationalFailure(env, { service: 'admin_api', eventName: 'provider.resend_network_failed', httpStatus: 502 })
     return { ok: false, code: 'EMAIL_ERROR', message: 'The shortlist email service could not be reached. The candidate status was not changed.' }
   }
+  const tracked = await trackResendResponse(env, response, { applicationId: applicant.application_id, messageType: 'candidate_shortlisted', recipientType: 'candidate' })
   if (!response.ok) {
     logError('provider.resend_request_failed', { messageType: 'candidate_shortlisted', httpStatus: response.status })
     await recordOperationalFailure(env, { service: 'admin_api', eventName: 'provider.resend_request_failed', httpStatus: response.status })
     return { ok: false, code: 'EMAIL_ERROR', message: 'The shortlist email could not be sent. The candidate status was not changed.' }
   }
-  const result = await response.json().catch(() => ({}))
-  return { ok: true, id: result.id || null }
+  return { ok: true, id: tracked.id }
 }
 
 function signPhotoUrls(env, photos) {
@@ -156,6 +158,95 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
 
   if (url.pathname === '/api/admin/session' && request.method === 'GET') {
     return apiJson({ email: auth.email })
+  }
+
+  if (url.pathname === '/api/admin/analytics' && request.method === 'GET') {
+    const requestedDays = Number.parseInt(url.searchParams.get('days') || '30', 10)
+    const days = [7, 30, 90].includes(requestedDays) ? requestedDays : 30
+    const startModifier = `-${days - 1} days`
+    const applicationTrendQuery = `
+      WITH RECURSIVE days(day) AS (
+        SELECT date('now', '+8 hours', ?)
+        UNION ALL SELECT date(day, '+1 day') FROM days WHERE day < date('now', '+8 hours')
+      )
+      SELECT days.day, COUNT(d.application_id) AS count
+      FROM days
+      LEFT JOIN applicant_details d
+        ON date(d.submitted_at, '+8 hours') = days.day
+       AND d.application_status <> 'pending_upload'
+      GROUP BY days.day ORDER BY days.day
+    `
+    const emailTrendQuery = `
+      WITH RECURSIVE days(day) AS (
+        SELECT date('now', '+8 hours', ?)
+        UNION ALL SELECT date(day, '+1 day') FROM days WHERE day < date('now', '+8 hours')
+      )
+      SELECT days.day,
+             SUM(CASE WHEN e.status = 'accepted' THEN 1 ELSE 0 END) AS accepted,
+             SUM(CASE WHEN e.status = 'failed' THEN 1 ELSE 0 END) AS failed
+      FROM days
+      LEFT JOIN email_messages e ON date(e.attempted_at, '+8 hours') = days.day
+      GROUP BY days.day ORDER BY days.day
+    `
+    const [applicationTrend, applicationSummary, emailTrend, emailSummary, emailTypes, latestQuota, recentFailures, tracking] = await Promise.all([
+      env.DB.prepare(applicationTrendQuery).bind(startModifier).all(),
+      env.DB.prepare(`
+        SELECT
+          SUM(CASE WHEN application_status <> 'pending_upload' THEN 1 ELSE 0 END) AS total,
+          SUM(CASE WHEN application_status <> 'pending_upload' AND date(submitted_at, '+8 hours') >= date('now', '+8 hours', ?) THEN 1 ELSE 0 END) AS period_total,
+          SUM(CASE WHEN application_status = 'pending_upload' THEN 1 ELSE 0 END) AS pending_upload
+        FROM applicant_details
+      `).bind(startModifier).first(),
+      env.DB.prepare(emailTrendQuery).bind(startModifier).all(),
+      env.DB.prepare(`
+        SELECT COUNT(*) AS attempts,
+               SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) AS accepted,
+               SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+        FROM email_messages
+        WHERE date(attempted_at, '+8 hours') >= date('now', '+8 hours', ?)
+      `).bind(startModifier).first(),
+      env.DB.prepare(`
+        SELECT message_type,
+               SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) AS accepted,
+               SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+        FROM email_messages
+        WHERE date(attempted_at, '+8 hours') >= date('now', '+8 hours', ?)
+        GROUP BY message_type ORDER BY accepted DESC, message_type
+      `).bind(startModifier).all(),
+      env.DB.prepare(`
+        SELECT daily_quota_used, monthly_quota_used, rate_limit_remaining,
+               rate_limit_reset_seconds, attempted_at
+        FROM email_messages
+        WHERE daily_quota_used IS NOT NULL OR monthly_quota_used IS NOT NULL
+        ORDER BY attempted_at DESC, id DESC LIMIT 1
+      `).first(),
+      env.DB.prepare(`
+        SELECT application_id, message_type, provider_http_status, failure_code, attempted_at
+        FROM email_messages WHERE status = 'failed'
+        ORDER BY attempted_at DESC, id DESC LIMIT 8
+      `).all(),
+      env.DB.prepare('SELECT MIN(attempted_at) AS tracking_since, MAX(attempted_at) AS last_attempt_at FROM email_messages').first(),
+    ])
+    return apiJson({
+      range_days: days,
+      application_summary: {
+        total: Number(applicationSummary?.total || 0),
+        period_total: Number(applicationSummary?.period_total || 0),
+        pending_upload: Number(applicationSummary?.pending_upload || 0),
+      },
+      application_trend: applicationTrend.results.map((row) => ({ day: row.day, count: Number(row.count || 0) })),
+      email_summary: {
+        attempts: Number(emailSummary?.attempts || 0),
+        accepted: Number(emailSummary?.accepted || 0),
+        failed: Number(emailSummary?.failed || 0),
+      },
+      email_trend: emailTrend.results.map((row) => ({ day: row.day, accepted: Number(row.accepted || 0), failed: Number(row.failed || 0) })),
+      email_types: emailTypes.results.map((row) => ({ message_type: row.message_type, accepted: Number(row.accepted || 0), failed: Number(row.failed || 0) })),
+      quota: latestQuota || null,
+      recent_failures: recentFailures.results,
+      tracking_since: tracking?.tracking_since || null,
+      last_attempt_at: tracking?.last_attempt_at || null,
+    })
   }
 
   if (url.pathname === '/api/admin/applications' && request.method === 'GET') {
