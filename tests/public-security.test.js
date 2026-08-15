@@ -560,6 +560,21 @@ test('admin defaults to dark mode without relying on CSP-blocked inline scripts'
   assert.match(main, /localStorage\.getItem\('nexa-admin-theme-v2'\) \|\| 'dark'/)
 })
 
+test('admin ImageKit analytics shows readable usage, remaining quota, reset timing and refresh', () => {
+  const app = readFileSync(new URL('../admin/src/App.jsx', import.meta.url), 'utf8')
+  assert.match(app, /Image storage/)
+  assert.match(app, /out of/)
+  assert.match(app, /function formatGigabytes/)
+  assert.match(app, /\.toFixed\(2\)/)
+  assert.doesNotMatch(app, /labelHelp=/)
+  assert.match(app, /remaining/)
+  assert.match(app, /does not reset/)
+  assert.match(app, /bandwidth_resets_on/)
+  assert.match(app, /Refresh ImageKit and analytics data/)
+  assert.match(app, /ImageKit usage has passed 70%/)
+  assert.match(app, /ImageKit usage is critically high/)
+})
+
 test('privacy notice covers the reviewed bilingual PDPA disclosures', () => {
   const notice = readFileSync(new URL('../src/pages/Privacy.jsx', import.meta.url), 'utf8')
   for (const requiredDisclosure of [

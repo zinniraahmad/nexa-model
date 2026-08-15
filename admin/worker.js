@@ -8,6 +8,8 @@ const STATUSES = ['submitted', 'reviewing', 'shortlisted', 'contacted', 'rejecte
 const SOFT_DELETE_DAYS = 30
 const ADMIN_PAGE_SIZE = 50
 const MAX_ADMIN_PAGE = 10000
+const DEFAULT_IMAGEKIT_BANDWIDTH_LIMIT_BYTES = 20_000_000_000
+const DEFAULT_IMAGEKIT_STORAGE_LIMIT_BYTES = 3_000_000_000
 const SORT_COLUMNS = {
   submitted_at: 'd.submitted_at',
   age: "CAST(json_extract(d.responses_json, '$.age') AS INTEGER)",
@@ -38,6 +40,71 @@ function parseResponses(value) {
     return { ...responses, marital_status: responses.marital_status ?? null }
   } catch {
     return { marital_status: null }
+  }
+}
+
+function malaysiaDateParts(date) {
+  return Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]))
+}
+
+function imageKitUsageDateRange(now = new Date()) {
+  const { year, month, day } = malaysiaDateParts(now)
+  const tomorrow = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day) + 1))
+  const nextMonth = new Date(Date.UTC(Number(year), Number(month), 1))
+  return {
+    startDate: `${year}-${month}-01`,
+    endDate: tomorrow.toISOString().slice(0, 10),
+    resetsOn: nextMonth.toISOString().slice(0, 10),
+  }
+}
+
+function positiveNumber(value, fallback) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : fallback
+}
+
+async function getImageKitUsage(env, now = new Date()) {
+  const limits = {
+    bandwidth_bytes: positiveNumber(env.IMAGEKIT_BANDWIDTH_LIMIT_BYTES, DEFAULT_IMAGEKIT_BANDWIDTH_LIMIT_BYTES),
+    storage_bytes: positiveNumber(env.IMAGEKIT_STORAGE_LIMIT_BYTES, DEFAULT_IMAGEKIT_STORAGE_LIMIT_BYTES),
+  }
+  if (!env.IMAGEKIT_PRIVATE_KEY) return { available: false, reason: 'not_configured', limits }
+
+  const { startDate, endDate, resetsOn } = imageKitUsageDateRange(now)
+  const url = new URL('https://api.imagekit.io/v1/accounts/usage')
+  url.searchParams.set('startDate', startDate)
+  url.searchParams.set('endDate', endDate)
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Basic ${btoa(`${env.IMAGEKIT_PRIVATE_KEY}:`)}`,
+      },
+    })
+    if (!response.ok) {
+      logError('provider.imagekit_usage_failed', { service: 'imagekit', httpStatus: response.status })
+      return { available: false, reason: 'provider_error', limits }
+    }
+    const usage = await response.json()
+    return {
+      available: true,
+      bandwidth_bytes: Number(usage.bandwidthBytes || 0),
+      storage_bytes: Number(usage.mediaLibraryStorageBytes || 0),
+      video_processing_units: Number(usage.videoProcessingUnitsCount || 0),
+      extension_units: Number(usage.extensionUnitsCount || 0),
+      original_cache_storage_bytes: Number(usage.originalCacheStorageBytes || 0),
+      period_start: startDate,
+      period_end_exclusive: endDate,
+      bandwidth_resets_on: resetsOn,
+      fetched_at: now.toISOString(),
+      limits,
+    }
+  } catch (error) {
+    logError('provider.imagekit_usage_failed', { service: 'imagekit' }, error)
+    return { available: false, reason: 'network_error', limits }
   }
 }
 
@@ -263,7 +330,7 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
       LEFT JOIN email_messages e ON date(e.attempted_at, '+8 hours') = days.day
       GROUP BY days.day ORDER BY days.day
     `
-    const [applicationTrend, applicationSummary, emailTrend, emailSummary, emailTypes, latestQuota, recentFailures, tracking] = await Promise.all([
+    const [applicationTrend, applicationSummary, emailTrend, emailSummary, emailTypes, latestQuota, recentFailures, tracking, imageKitUsage] = await Promise.all([
       env.DB.prepare(applicationTrendQuery).bind(startModifier).all(),
       env.DB.prepare(`
         SELECT
@@ -301,6 +368,7 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
         ORDER BY attempted_at DESC, id DESC LIMIT 8
       `).all(),
       env.DB.prepare('SELECT MIN(attempted_at) AS tracking_since, MAX(attempted_at) AS last_attempt_at FROM email_messages').first(),
+      getImageKitUsage(env),
     ])
     return apiJson({
       range_days: days,
@@ -321,6 +389,7 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
       recent_failures: recentFailures.results,
       tracking_since: tracking?.tracking_since || null,
       last_attempt_at: tracking?.last_attempt_at || null,
+      imagekit_usage: imageKitUsage,
     })
   }
 
@@ -696,4 +765,4 @@ export default {
   },
 }
 
-export { ADMIN_PAGE_SIZE, buildShortlistedEmail, enforceAdminRateLimit, handleApi, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded, signPhotoUrls, verifyApplicationPageState }
+export { ADMIN_PAGE_SIZE, buildShortlistedEmail, enforceAdminRateLimit, getImageKitUsage, handleApi, imageKitUsageDateRange, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded, signPhotoUrls, verifyApplicationPageState }

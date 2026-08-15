@@ -102,14 +102,23 @@ h1 { margin: 0 0 8px; font-size: clamp(41px, 5vw, 65px); letter-spacing: -.055em
 .quota-panel { display: flex; flex-direction: column; }
 .quota-row { display: grid; gap: 10px; margin-bottom: 25px; }
 .quota-row > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
-.quota-row span { color: var(--muted); font-size: 14px; }
-.quota-row strong { font: 600 14px 'Manrope'; }
+.quota-row span { color: var(--muted); font-size: 16px; }
+.quota-row strong { font: 600 16px 'Manrope'; }
 .quota-track { height: 10px; overflow: hidden; border-radius: 20px; background: var(--line-soft); }
 .quota-track i { height: 100%; display: block; border-radius: inherit; background: #4a9255; transition: width .25s ease; }
 .quota-track.warning i { background: #d09524; }
 .quota-track.danger i { background: #b85a5a; }
+.quota-detail { margin-top: -4px; color: var(--soft-muted); font-size: 13px; line-height: 1.45; }
+.analytics-refresh { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: var(--input); cursor: pointer; font-size: 12px; font-weight: 600; }
+.analytics-refresh:hover:not(:disabled) { color: var(--ink); border-color: var(--soft-muted); }
+.analytics-refresh:disabled { opacity: .55; cursor: wait; }
+.analytics-refresh .spin { animation: spin .9s linear infinite; }
+.quota-warning { display: flex; align-items: flex-start; gap: 7px; margin: -2px 0 18px; padding: 10px 11px; border: 1px solid #8a682c; border-radius: 7px; color: #c99b41; background: rgba(208,149,36,.08); font-size: 12px; line-height: 1.45; }
+.quota-warning svg { flex: 0 0 auto; margin-top: 1px; }
+.quota-warning.is-critical { border-color: #7d4a45; color: #d2766d; background: rgba(178,59,59,.08); }
 .analytics-note, .analytics-footnote { color: var(--soft-muted); font-size: 12px; line-height: 1.55; }
 .analytics-note { margin: auto 0 0; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.analytics-note.usage-unavailable { color: #c28833; }
 .chart-legend { display: flex; gap: 12px; color: var(--muted); font-size: 12px; }
 .chart-legend span { display: flex; align-items: center; gap: 5px; }
 .chart-legend i { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }

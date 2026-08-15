@@ -127,8 +127,22 @@ test('admin list endpoint enforces fixed server-side pagination', async () => {
   assert.deepEqual(body.pagination, { page: 2, page_size: 50, total: 55, total_pages: 2, has_previous: true, has_next: false })
 })
 
-test('admin analytics endpoint returns complete date ranges and email usage metadata', async () => {
+test('admin analytics endpoint returns complete date ranges plus email and ImageKit usage metadata', async (context) => {
   const DB = createTestDatabase()
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    const requestUrl = new URL(url)
+    assert.equal(requestUrl.pathname, '/v1/accounts/usage')
+    assert.match(requestUrl.searchParams.get('startDate'), /^\d{4}-\d{2}-01$/)
+    assert.match(requestUrl.searchParams.get('endDate'), /^\d{4}-\d{2}-\d{2}$/)
+    assert.equal(init.headers.Authorization, `Basic ${btoa('private_test_key:')}`)
+    return Response.json({
+      bandwidthBytes: 1_250_000_000,
+      mediaLibraryStorageBytes: 750_000_000,
+      videoProcessingUnitsCount: 0,
+      extensionUnitsCount: 2,
+      originalCacheStorageBytes: 0,
+    })
+  })
   DB.raw.prepare(`
     INSERT INTO email_messages (
       resend_email_id, application_id, message_type, recipient_type, status,
@@ -136,7 +150,12 @@ test('admin analytics endpoint returns complete date ranges and email usage meta
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `).run('resend-test-1', 'app-alice', 'candidate_receipt', 'candidate', 'accepted', 200, 4, 19)
 
-  const response = await callApi({ DB }, '/api/admin/analytics?days=7')
+  const response = await callApi({
+    DB,
+    IMAGEKIT_PRIVATE_KEY: 'private_test_key',
+    IMAGEKIT_BANDWIDTH_LIMIT_BYTES: 20_000_000_000,
+    IMAGEKIT_STORAGE_LIMIT_BYTES: 3_000_000_000,
+  }, '/api/admin/analytics?days=7')
   const body = await response.json()
   assert.equal(response.status, 200)
   assert.equal(body.range_days, 7)
@@ -146,6 +165,28 @@ test('admin analytics endpoint returns complete date ranges and email usage meta
   assert.equal(body.quota.daily_quota_used, 4)
   assert.equal(body.quota.monthly_quota_used, 19)
   assert.equal(body.email_types[0].message_type, 'candidate_receipt')
+  assert.equal(body.imagekit_usage.available, true)
+  assert.equal(body.imagekit_usage.bandwidth_bytes, 1_250_000_000)
+  assert.equal(body.imagekit_usage.storage_bytes, 750_000_000)
+  assert.equal(body.imagekit_usage.extension_units, 2)
+  assert.match(body.imagekit_usage.bandwidth_resets_on, /^\d{4}-\d{2}-01$/)
+  assert.equal(body.imagekit_usage.limits.bandwidth_bytes, 20_000_000_000)
+  assert.equal(body.imagekit_usage.limits.storage_bytes, 3_000_000_000)
+})
+
+test('admin analytics remains available when ImageKit usage cannot be loaded', async (context) => {
+  const DB = createTestDatabase()
+  context.mock.method(globalThis, 'fetch', async () => new Response('', { status: 503 }))
+  const response = await callApi({ DB, IMAGEKIT_PRIVATE_KEY: 'private_test_key' }, '/api/admin/analytics?days=30')
+  const body = await response.json()
+
+  assert.equal(response.status, 200)
+  assert.equal(body.application_summary.total, 2)
+  assert.deepEqual(body.imagekit_usage, {
+    available: false,
+    reason: 'provider_error',
+    limits: { bandwidth_bytes: 20_000_000_000, storage_bytes: 3_000_000_000 },
+  })
 })
 
 test('website control closes applications only after the public redirect is verified', async (context) => {

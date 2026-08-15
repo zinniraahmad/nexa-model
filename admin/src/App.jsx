@@ -668,15 +668,41 @@ function MetricCard({ label, value, detail, tone }) {
   </article>
 }
 
-function QuotaProgress({ label, used, limit }) {
+function QuotaProgress({ label, used, limit, formatValue = (value) => value.toLocaleString(), provider = 'Resend', detail }) {
   const available = Number.isFinite(Number(used))
   const numericUsed = available ? Number(used) : 0
   const percentage = Math.min(100, Math.max(0, (numericUsed / limit) * 100))
   const warning = percentage >= 85 ? ' danger' : percentage >= 70 ? ' warning' : ''
   return <div className="quota-row">
-    <div><span>{label}</span><strong>{available ? `${numericUsed.toLocaleString()} / ${limit.toLocaleString()}` : 'Waiting for data'}</strong></div>
-    <div className={`quota-track${warning}`} role="progressbar" aria-label={`${label} Resend quota`} aria-valuemin="0" aria-valuemax={limit} aria-valuenow={available ? numericUsed : 0}><i style={{ width: `${percentage}%` }} /></div>
+    <div><span>{label}</span><strong>{available ? `${formatValue(numericUsed)} out of ${formatValue(limit)}` : 'Waiting for data'}</strong></div>
+    <div className={`quota-track${warning}`} role="progressbar" aria-label={`${label} ${provider} quota`} aria-valuemin="0" aria-valuemax={limit} aria-valuenow={available ? numericUsed : 0}><i style={{ width: `${percentage}%` }} /></div>
+    {available && detail && <small className="quota-detail">{detail}</small>}
   </div>
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0)
+  if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(bytes >= 10_000_000_000 ? 1 : 2)} GB`
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`
+  if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(1)} KB`
+  return `${bytes.toLocaleString()} B`
+}
+
+function formatGigabytes(value) {
+  return `${(Number(value || 0) / 1_000_000_000).toFixed(2)} GB`
+}
+
+function quotaDetail(used, limit, suffix, formatValue = formatBytes) {
+  const numericUsed = Number(used)
+  const numericLimit = Number(limit)
+  if (!Number.isFinite(numericUsed) || !Number.isFinite(numericLimit) || numericLimit <= 0) return ''
+  const percentage = Math.min(100, Math.max(0, (numericUsed / numericLimit) * 100))
+  return `${percentage.toFixed(1)}% used · ${formatValue(Math.max(0, numericLimit - numericUsed))} remaining${suffix ? ` · ${suffix}` : ''}`
+}
+
+function formatResetDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return 'next calendar month'
+  return new Intl.DateTimeFormat('en-MY', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00Z`))
 }
 
 function TrendBars({ rows, valueKey = 'count', secondaryKey, emptyLabel }) {
@@ -719,10 +745,17 @@ function AnalyticsPage() {
   if (error) return <div className="analytics-page"><section className="page-heading"><div><p className="eyebrow">ADMIN INSIGHTS</p><h1>Analytics</h1></div></section><ErrorState error={error} onRetry={() => setReloadKey((current) => current + 1)} /></div>
   const applications = data?.application_summary || {}
   const emails = data?.email_summary || {}
+  const imageKit = data?.imagekit_usage || {}
+  const imageKitBandwidthLimit = imageKit.limits?.bandwidth_bytes || 20_000_000_000
+  const imageKitStorageLimit = imageKit.limits?.storage_bytes || 3_000_000_000
+  const imageKitHighestUsage = imageKit.available ? Math.max(
+    Number(imageKit.bandwidth_bytes || 0) / imageKitBandwidthLimit,
+    Number(imageKit.storage_bytes || 0) / imageKitStorageLimit,
+  ) * 100 : 0
   const acceptanceRate = emails.attempts ? `${Math.round((emails.accepted / emails.attempts) * 100)}%` : '—'
 
   return <div className="analytics-page">
-    <section className="page-heading analytics-heading"><div><p className="eyebrow">ADMIN INSIGHTS</p><h1>Analytics</h1><p>Application activity and Resend operational usage in one place.</p></div><label>Range<select value={days} onChange={(event) => setDays(Number(event.target.value))}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label></section>
+    <section className="page-heading analytics-heading"><div><p className="eyebrow">ADMIN INSIGHTS</p><h1>Analytics</h1><p>Application activity and provider usage in one place.</p></div><label>Range<select value={days} onChange={(event) => setDays(Number(event.target.value))}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label></section>
     {loading && !data ? <div className="analytics-loading"><LoaderCircle className="spin" /> Loading analytics…</div> : <>
       <section className="analytics-metrics" aria-label="Analytics summary">
         <MetricCard label="Applications" value={applications.period_total || 0} detail={`Submitted in the last ${days} days`} />
@@ -734,6 +767,7 @@ function AnalyticsPage() {
       <section className="analytics-grid">
         <article className="analytics-panel trend-panel"><div className="analytics-panel-heading"><div><p className="eyebrow">APPLICATIONS</p><h2>Submission trend</h2></div><strong>{applications.total || 0}<span> all time</span></strong></div><TrendBars rows={data?.application_trend || []} emptyLabel="No submitted applications in this range." /></article>
         <article className="analytics-panel quota-panel"><div className="analytics-panel-heading"><div><p className="eyebrow">RESEND FREE</p><h2>Quota usage</h2></div></div><QuotaProgress label="Daily usage" used={data?.quota?.daily_quota_used} limit={100} /><QuotaProgress label="Monthly usage" used={data?.quota?.monthly_quota_used} limit={3000} /><p className="analytics-note">Captured from Resend response headers. {data?.quota?.attempted_at ? `Last updated ${formatDate(data.quota.attempted_at)} MYT.` : 'The first snapshot will appear after the next email attempt.'}</p></article>
+        <article className="analytics-panel quota-panel imagekit-quota-panel"><div className="analytics-panel-heading"><div><p className="eyebrow">IMAGEKIT</p><h2>ImageKit usage</h2></div><button type="button" className="analytics-refresh" onClick={() => setReloadKey((current) => current + 1)} disabled={loading} title="Refresh ImageKit and analytics data"><RefreshCw className={loading ? 'spin' : undefined} size={15} /> Refresh</button></div><QuotaProgress label="Monthly bandwidth" used={imageKit.available ? imageKit.bandwidth_bytes : null} limit={imageKitBandwidthLimit} formatValue={formatGigabytes} provider="ImageKit" detail={quotaDetail(imageKit.bandwidth_bytes, imageKitBandwidthLimit, `resets ${formatResetDate(imageKit.bandwidth_resets_on)}`, formatGigabytes)} /><QuotaProgress label="Image storage" used={imageKit.available ? imageKit.storage_bytes : null} limit={imageKitStorageLimit} formatValue={formatGigabytes} provider="ImageKit" detail={quotaDetail(imageKit.storage_bytes, imageKitStorageLimit, 'does not reset', formatGigabytes)} />{imageKitHighestUsage >= 70 && <p className={`quota-warning${imageKitHighestUsage >= 85 ? ' is-critical' : ''}`} role="status"><AlertTriangle size={16} />{imageKitHighestUsage >= 85 ? 'ImageKit usage is critically high. Review usage or upgrade the plan.' : 'ImageKit usage has passed 70%. Monitor remaining capacity.'}</p>}<p className={`analytics-note${imageKit.available ? '' : ' usage-unavailable'}`}>{imageKit.available ? <>Live account usage from ImageKit. Last updated {formatDate(imageKit.fetched_at)} MYT.</> : imageKit.reason === 'not_configured' ? 'ImageKit usage is unavailable because the private key is not configured.' : 'ImageKit usage is temporarily unavailable. Other analytics remain current.'}</p></article>
         <article className="analytics-panel trend-panel"><div className="analytics-panel-heading"><div><p className="eyebrow">EMAIL ACTIVITY</p><h2>Resend attempts</h2></div><div className="chart-legend"><span><i />Accepted</span><span><i className="failed" />Failed</span></div></div><TrendBars rows={data?.email_trend || []} valueKey="accepted" secondaryKey="failed" emptyLabel="Email tracking has no activity in this range yet." /></article>
         <article className="analytics-panel email-types-panel"><div className="analytics-panel-heading"><div><p className="eyebrow">BREAKDOWN</p><h2>Email types</h2></div></div>{data?.email_types?.length ? <ul>{data.email_types.map((row) => <li key={row.message_type}><span>{emailTypeLabels[row.message_type] || row.message_type}</span><strong>{row.accepted}<small> accepted</small></strong>{row.failed > 0 && <em>{row.failed} failed</em>}</li>)}</ul> : <div className="analytics-empty compact"><Mail size={22} /><span>No tracked emails yet.</span></div>}</article>
       </section>
