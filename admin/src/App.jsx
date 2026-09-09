@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, AlertTriangle, ArrowLeft, BarChart3, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, Database, Download, ExternalLink, Files, Image, ImageOff, LoaderCircle, LogIn, LogOut, Mail, MapPin, Menu, MonitorCog, Moon, Phone, RefreshCw, Search, ShieldAlert, Sun, Tag, Trash2, Users, WifiOff, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { AlertCircle, AlertTriangle, ArrowLeft, BarChart3, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, Database, Download, ExternalLink, Files, Grid2X2, Image, ImageOff, List, LoaderCircle, LogIn, LogOut, Mail, MapPin, Menu, MonitorCog, Moon, Phone, RefreshCw, Search, ShieldAlert, Sun, Tag, Trash2, Users, WifiOff, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { applicationSections, declarationFields, photoFields } from '../../src/applicationForm.js'
+import TrainingPage from './TrainingPage.jsx'
+import TrainingCalendar from './TrainingCalendar.jsx'
+import { whatsappUrl } from './whatsapp.js'
 
 const MALAYSIA_TIME_ZONE = 'Asia/Kuala_Lumpur'
 const statusLabels = { submitted: 'Submitted', reviewing: 'Reviewing', shortlisted: 'Shortlisted', contacted: 'Contacted', rejected: 'Rejected' }
@@ -121,10 +124,11 @@ class AdminApiError extends Error {
   }
 }
 
-async function api(path, options) {
+export async function api(path, options) {
   let response
   try {
-    response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options?.headers } })
+    const multipart = typeof FormData !== 'undefined' && options?.body instanceof FormData
+    response = await fetch(path, { ...options, headers: { ...(multipart ? {} : { 'Content-Type': 'application/json' }), ...options?.headers } })
   } catch (error) {
     if (error?.name === 'AbortError') throw error
     const offline = typeof navigator !== 'undefined' && !navigator.onLine
@@ -340,6 +344,40 @@ function ShortlistDialog({ application, confirming, error, onCancel, onConfirm }
   </div>
 }
 
+function RejectDialog({ application, confirming, error, onCancel, onConfirm }) {
+  const dialogRef = useDialogFocus(onCancel, confirming)
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !confirming) onCancel() }}>
+    <section ref={dialogRef} className="dialog reject-dialog" role="alertdialog" aria-modal="true" aria-labelledby="reject-title" tabIndex="-1">
+      <button className="dialog-close" onClick={onCancel} disabled={confirming} aria-label="Close"><X size={18} /></button>
+      <div className="dialog-icon"><Mail size={22} /></div>
+      <h2 id="reject-title">Reject this candidate?</h2>
+      <p>Are you sure you want to reject <strong>{application.full_name}</strong>? This action will save the review and send a rejection email to the candidate.</p>
+      {error && <p className="form-error" role="alert">{error.message || error}{error.code === 'SESSION_EXPIRED' && <button type="button" className="inline-action" onClick={signInAgain}>Sign in again</button>}</p>}
+      <div className="dialog-actions"><button className="cancel-button" onClick={onCancel} disabled={confirming}>No</button><button className="reject-confirm-button" onClick={onConfirm} disabled={confirming}>{confirming ? 'Sending…' : 'Yes, reject'}</button></div>
+    </section>
+  </div>
+}
+
+function ApplicationIconGrid({ applications, loading, selectedIds, deletedView, restoringId, hasFilters, onToggle, onSelect, onDelete, onRestore, onClearFilters, onShowActive }) {
+  if (loading) return <div className="application-icon-grid" aria-busy="true" aria-label="Loading applications">{Array.from({ length: 8 }, (_, index) => <div className="candidate-icon-card candidate-icon-skeleton" aria-hidden="true" key={index}><span className="skeleton-block" /><i className="skeleton-line" /></div>)}</div>
+  if (!applications.length) return <div className="empty actionable-empty-state"><Users /><strong>{deletedView ? 'Recently Deleted is empty' : hasFilters ? 'No matching applications' : 'No applications yet'}</strong><p>{deletedView ? 'Deleted applications will remain here for 30 days and can be restored during that period.' : hasFilters ? 'Try clearing the current search and filters to see all applications.' : 'New candidate submissions will appear here automatically.'}</p>{deletedView ? <button onClick={onShowActive}>View active applications</button> : hasFilters ? <button onClick={onClearFilters}>Clear filters</button> : null}</div>
+  return <div className="application-icon-grid">
+    {applications.map((item) => <article className={`candidate-icon-card${selectedIds.has(item.application_id) ? ' selected-icon-card' : ''}${item.retention_warning && !deletedView ? ' retention-icon-card' : ''}`} key={item.application_id}>
+      {!deletedView && <label className="icon-checkbox" onClick={(event) => event.stopPropagation()}><input className="row-checkbox" type="checkbox" checked={selectedIds.has(item.application_id)} disabled={item.application_status === 'orphaned'} aria-label={`Select ${item.full_name}`} onChange={() => onToggle(item.application_id)} /></label>}
+      <button type="button" className="candidate-icon-profile" disabled={deletedView || item.application_status === 'orphaned'} onClick={() => onSelect(item.application_id)} aria-label={`Open ${item.full_name}`}>
+        <span className="candidate-icon-photo">{item.profile_photo_url ? <img src={item.profile_photo_url} alt="" loading="lazy" /> : <span className="candidate-icon-photo-missing"><ImageOff size={30} /><small>No profile photo</small></span>}</span>
+        <strong>{item.full_name}</strong>
+      </button>
+      <div className="candidate-icon-footer">
+        {deletedView ? <span className="status status-deleted">Deleted</span> : <StatusBadge status={item.application_status} />}
+        <div className="row-actions">
+          {deletedView ? <><button className="restore-row-button" disabled={restoringId === item.application_id} title={`Restore ${item.full_name}`} aria-label={`Restore ${item.full_name}`} onClick={() => onRestore(item)}>{restoringId === item.application_id ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}</button>{Date.parse(item.delete_after) <= Date.now() && <button className="delete-row-button" title={`Permanently delete ${item.full_name}`} aria-label={`Permanently delete ${item.full_name}`} onClick={() => onDelete(item, 'permanent')}><Trash2 size={17} /></button>}</> : <><button className="delete-row-button" title={`Delete application for ${item.full_name}`} aria-label={`Delete application for ${item.full_name}`} onClick={() => onDelete(item, 'manual')}><Trash2 size={17} /></button></>}
+        </div>
+      </div>
+    </article>)}
+  </div>
+}
+
 function RestoreDialog({ application, restoring, error, onCancel, onConfirm }) {
   const dialogRef = useDialogFocus(onCancel, restoring)
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !restoring) onCancel() }}>
@@ -366,7 +404,7 @@ function DetailSkeleton({ onBack }) {
         <div className="skeleton-hero-content">
           <div className="skeleton-line skeleton-reference" />
           <div className="skeleton-line skeleton-name" />
-          <div className="skeleton-facts"><div className="skeleton-block" /><div className="skeleton-block" /></div>
+          <div className="skeleton-facts"><div className="skeleton-block" /><div className="skeleton-block" /><div className="skeleton-block" /><div className="skeleton-block" /><div className="skeleton-block" /></div>
           <div className="skeleton-line skeleton-contact" />
           <div className="skeleton-line skeleton-date" />
         </div>
@@ -412,6 +450,9 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
   const [shortlistDialogOpen, setShortlistDialogOpen] = useState(false)
   const [shortlisting, setShortlisting] = useState(false)
   const [shortlistError, setShortlistError] = useState(null)
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false)
+  const [rejecting, setRejecting] = useState(false)
+  const [rejectError, setRejectError] = useState(null)
 
   function loadDetail() {
     setRecord(null)
@@ -484,6 +525,7 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
       reviewed_at: result.review?.changed_at || current.reviewed_at,
       reviewed_by: result.review?.changed_by || current.reviewed_by,
       shortlisted_email_sent_at: result.shortlisted_email_sent_at || current.shortlisted_email_sent_at,
+      rejected_email_sent_at: result.rejected_email_sent_at || current.rejected_email_sent_at,
       history: result.review ? [...(current.history || []), result.review] : current.history,
     }))
   }
@@ -492,6 +534,11 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
     if (nextStatus === 'shortlisted' && record.application_status !== 'shortlisted') {
       setShortlistError(null)
       setShortlistDialogOpen(true)
+      return
+    }
+    if (nextStatus === 'rejected' && record.application_status !== 'rejected') {
+      setRejectError(null)
+      setRejectDialogOpen(true)
       return
     }
     setStatus(nextStatus)
@@ -520,6 +567,29 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
     }
   }
 
+  async function confirmReject() {
+    setRejecting(true)
+    setRejectError(null)
+    setError(null)
+    try {
+      const tags = [...new Set(tagsText.split(',').map((tag) => tag.trim()).filter(Boolean))]
+      const result = await api(`/api/admin/applications/${encodeURIComponent(applicationId)}`, {
+        method: 'PATCH', body: JSON.stringify({ status: 'rejected', notes, tags, send_rejected_email: true }),
+      })
+      setStatus('rejected')
+      setTagsText(tags.join(', '))
+      applySavedReview(result, 'rejected', notes, tags)
+      setSavedAt(new Date().toISOString())
+      setRejectDialogOpen(false)
+      onToast('Candidate rejected and email sent successfully.')
+      onUpdated()
+    } catch (err) {
+      setRejectError(err)
+    } finally {
+      setRejecting(false)
+    }
+  }
+
   if (error && !record) return <ErrorState error={error} onRetry={loadDetail} onBack={onBack} />
   if (!record) return <DetailSkeleton onBack={onBack} />
 
@@ -541,6 +611,7 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
   const unsaved = status !== record.application_status || notes !== (record.admin_notes || '') || tagsText !== currentTags
   const activePhoto = lightboxIndex === null ? null : record.photos[lightboxIndex]
   const featuredPhoto = record.photos.find((photo) => photo.photo_type === 'front_facing' || photo.photo_type?.startsWith('front_facing_'))
+  const candidateWhatsAppUrl = whatsappUrl(record.phone)
   return <>
     <div className="detail-navigation">
       <button className="back-button" onClick={onBack}><ArrowLeft size={17} /> All applications</button>
@@ -560,12 +631,17 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
         </div>
         <h2>{record.full_name}</h2>
         <div className="hero-facts">
-          <div><span>Age</span><strong>{displayValue(record.responses.age)} years</strong></div>
+          <div><span>Age</span><strong>{displayValue(record.responses.age)}</strong></div>
           <div><span>Current location</span><strong><MapPin size={17} />{record.current_location || displayValue(record.responses.current_location)}</strong></div>
+          <div><span>Marital Status</span><strong>{displayValue(record.responses.marital_status)}</strong></div>
+          <div><span>Height</span><strong>{isMissing(record.responses.height_cm) ? '—' : `${displayValue(record.responses.height_cm)} cm`}</strong></div>
+          <div><span>Clothing Size</span><strong>{displayValue(record.responses.clothing_size)}</strong></div>
         </div>
         <div className="hero-contact">
           <a href={`mailto:${record.email}`}><Mail size={17} /><span>{record.email}</span></a>
-          <a href={`https://wa.me/${record.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"><Phone size={17} /><span>{record.phone}</span></a>
+          {candidateWhatsAppUrl
+            ? <a href={candidateWhatsAppUrl} target="_blank" rel="noopener noreferrer" aria-label={`Contact ${record.full_name} on WhatsApp`}><Phone size={17} /><span>{record.phone}</span></a>
+            : <span><Phone size={17} /><span>{displayValue(record.phone)}</span></span>}
         </div>
         <p className="hero-dates">Submitted {formatDate(record.submitted_at)} · Review for deletion by {formatDate(record.retention_due_at)}</p>
       </div>
@@ -627,10 +703,12 @@ function Detail({ applicationId, previousId, nextId, onBack, onNavigate, onUpdat
           <button className="primary-button" disabled={saving || !unsaved}>{saving ? 'Saving…' : 'Save review'}</button>
         </form>
         {record.shortlisted_email_sent_at && <small className="email-sent-state"><Check size={14} /> Shortlist email sent<br /><span>{formatDate(record.shortlisted_email_sent_at)}</span></small>}
+        {record.rejected_email_sent_at && <small className="email-sent-state"><Check size={14} /> Rejection email sent<br /><span>{formatDate(record.rejected_email_sent_at)}</span></small>}
         {record.reviewed_by && <small>Last reviewed by {record.reviewed_by}<br />{formatDate(record.reviewed_at)}</small>}
       </aside>
     </div>
     {shortlistDialogOpen && <ShortlistDialog application={record} confirming={shortlisting} error={shortlistError} onCancel={() => { setShortlistDialogOpen(false); setShortlistError(null) }} onConfirm={confirmShortlist} />}
+    {rejectDialogOpen && <RejectDialog application={record} confirming={rejecting} error={rejectError} onCancel={() => { setRejectDialogOpen(false); setRejectError(null) }} onConfirm={confirmReject} />}
     {activePhoto && <div className="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" onMouseDown={(event) => { if (event.target === event.currentTarget) setLightboxIndex(null) }}>
       <div className="lightbox-toolbar">
         <span>{lightboxIndex + 1} / {record.photos.length}</span>
@@ -649,6 +727,7 @@ const emailTypeLabels = {
   admin_notification: 'Admin notifications',
   pending_recovery: 'Recovery emails',
   candidate_shortlisted: 'Shortlist emails',
+  candidate_rejected: 'Rejection emails',
 }
 
 function AdminSidebar({ activePage, collapsed, onNavigate, onToggle }) {
@@ -656,6 +735,8 @@ function AdminSidebar({ activePage, collapsed, onNavigate, onToggle }) {
     <nav id="admin-sidebar-navigation" aria-label="Admin navigation">
       <button type="button" className="sidebar-toggle" aria-expanded={!collapsed} aria-controls="admin-sidebar-navigation" aria-label={collapsed ? 'Show sidebar' : 'Hide sidebar'} title={collapsed ? 'Show sidebar' : 'Hide sidebar'} onClick={onToggle}><Menu size={21} /></button>
       <a className={activePage === 'applications' ? 'active' : undefined} href="/" title={collapsed ? 'Applications' : undefined} aria-current={activePage === 'applications' ? 'page' : undefined} onClick={(event) => onNavigate(event, 'applications')}><Files size={20} /><span>Applications</span></a>
+      <a className={activePage === 'training' ? 'active' : undefined} href="/training" title={collapsed ? 'Training' : undefined} aria-current={activePage === 'training' ? 'page' : undefined} onClick={(event) => onNavigate(event, 'training')}><Users size={20} /><span>Training</span></a>
+      <a className={activePage === 'calendar' ? 'active' : undefined} href="/calendar" title={collapsed ? 'Calendar' : undefined} aria-current={activePage === 'calendar' ? 'page' : undefined} onClick={(event) => onNavigate(event, 'calendar')}><CalendarDays size={20} /><span>Calendar</span></a>
       <a className={activePage === 'website-control' ? 'active' : undefined} href="/website-control" title={collapsed ? 'Website Control' : undefined} aria-current={activePage === 'website-control' ? 'page' : undefined} onClick={(event) => onNavigate(event, 'website-control')}><MonitorCog size={20} /><span>Website Control</span></a>
       <a className={activePage === 'analytics' ? 'active analytics-link' : 'analytics-link'} href="/analytics" title={collapsed ? 'Analytics' : undefined} aria-current={activePage === 'analytics' ? 'page' : undefined} onClick={(event) => onNavigate(event, 'analytics')}><BarChart3 size={20} /><span>Analytics</span></a>
     </nav>
@@ -839,6 +920,8 @@ function WebsiteControlPage({ showToast }) {
 }
 
 function adminPageFromPath() {
+  if (window.location.pathname === '/calendar') return 'calendar'
+  if (window.location.pathname === '/training') return 'training'
   if (window.location.pathname === '/analytics') return 'analytics'
   if (window.location.pathname === '/website-control') return 'website-control'
   return 'applications'
@@ -847,6 +930,7 @@ function adminPageFromPath() {
 export default function App() {
   const [activePage, setActivePage] = useState(adminPageFromPath)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('nexa-admin-sidebar-collapsed') === 'true')
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem('nexa-admin-application-view') === 'icon' ? 'icon' : 'list')
   const [applications, setApplications] = useState([])
   const [summary, setSummary] = useState(emptySummary)
   const [pagination, setPagination] = useState(emptyPagination)
@@ -961,9 +1045,14 @@ export default function App() {
     })
   }
 
+  function changeViewMode(nextViewMode) {
+    localStorage.setItem('nexa-admin-application-view', nextViewMode)
+    setViewMode(nextViewMode)
+  }
+
   function navigatePage(event, pageName) {
     event.preventDefault()
-    const nextPath = pageName === 'analytics' ? '/analytics' : pageName === 'website-control' ? '/website-control' : '/'
+    const nextPath = pageName === 'analytics' ? '/analytics' : pageName === 'website-control' ? '/website-control' : pageName === 'training' ? '/training' : pageName === 'calendar' ? '/calendar' : '/'
     if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath)
     setActivePage(pageName)
     setSelected(null)
@@ -1072,7 +1161,7 @@ export default function App() {
     <div className={`admin-layout${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
     <AdminSidebar activePage={activePage} collapsed={sidebarCollapsed} onNavigate={navigatePage} onToggle={toggleSidebar} />
     <main className={`admin-body${selected ? ' detail-page' : ''}`}>
-      {activePage === 'analytics' ? <AnalyticsPage /> : activePage === 'website-control' ? <WebsiteControlPage showToast={showToast} /> : <>
+      {activePage === 'analytics' ? <AnalyticsPage /> : activePage === 'website-control' ? <WebsiteControlPage showToast={showToast} /> : activePage === 'training' ? <TrainingPage api={api} showToast={showToast} /> : activePage === 'calendar' ? <TrainingCalendar api={api} showToast={showToast} /> : <>
       {!selected && <>
         <section className="page-heading"><div><p className="eyebrow">NEXA TALENT DATABASE</p><h1>{deletedView ? 'Recently Deleted' : 'Applications'}</h1><p>{deletedView ? 'Applications remain recoverable for 30 days before permanent deletion.' : 'Review applicant information and photos in one place.'}</p></div><div className="result-meta">{lastUpdated && <small>Updated {formatDate(lastUpdated)}</small>}</div></section>
         <nav className="database-view-tabs" aria-label="Application database views">
@@ -1099,12 +1188,18 @@ export default function App() {
           <button className="secondary-button clear-filters" onClick={clearFilters}>Clear</button>
           <button className="export-button" title="Exports the applications shown on this page" disabled={loading || !applications.length} onClick={() => exportApplications(applications)}><Download size={16} /> Export CSV</button>
         </section>
+        <div className="application-view-toggle" role="group" aria-label="Candidate view">
+          <button type="button" className={viewMode === 'list' ? 'active' : undefined} aria-pressed={viewMode === 'list'} onClick={() => changeViewMode('list')}><List size={17} /> List</button>
+          <button type="button" className={viewMode === 'icon' ? 'active' : undefined} aria-pressed={viewMode === 'icon'} onClick={() => changeViewMode('icon')}><Grid2X2 size={17} /> Icon</button>
+        </div>
         {!deletedView && !error && !loading && applications.length > 0 && <section className="selection-toolbar">
           <label><input type="checkbox" checked={applications.filter((item) => item.application_status !== 'orphaned').length > 0 && applications.filter((item) => item.application_status !== 'orphaned').every((item) => selectedIds.has(item.application_id))} onChange={toggleAllVisible} /> Select all visible</label>
-          {selectedIds.size > 0 && <div><strong>{selectedIds.size} selected</strong><select aria-label="Bulk status" value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value)}>{Object.entries(statusLabels).filter(([value]) => value !== 'shortlisted').map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><button onClick={updateSelectedStatus} disabled={bulkSaving}>{bulkSaving ? 'Updating…' : 'Apply status'}</button></div>}
+          {selectedIds.size > 0 && <div><strong>{selectedIds.size} selected</strong><select aria-label="Bulk status" value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value)}>{Object.entries(statusLabels).filter(([value]) => !['shortlisted', 'rejected'].includes(value)).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><button onClick={updateSelectedStatus} disabled={bulkSaving}>{bulkSaving ? 'Updating…' : 'Apply status'}</button></div>}
           {bulkMessage && <span role="status">{bulkMessage}</span>}
         </section>}
-        {error ? <ErrorState error={error} onRetry={loadApplications} /> : <ApplicationList applications={applications} loading={loading} selectedIds={selectedIds} deletedView={deletedView} restoringId={restoringId} hasFilters={hasFilters} onToggle={toggleApplication} onSelect={selectApplication} onDelete={(application, deletionType) => { setDeleteError(''); setDeleteTarget({ application, deletionType }) }} onRestore={(application) => { setRestoreError(null); setRestoreTarget(application) }} onClearFilters={clearFilters} onShowActive={() => changeDeletedView(false)} />}
+        {error ? <ErrorState error={error} onRetry={loadApplications} /> : viewMode === 'icon'
+          ? <ApplicationIconGrid applications={applications} loading={loading} selectedIds={selectedIds} deletedView={deletedView} restoringId={restoringId} hasFilters={hasFilters} onToggle={toggleApplication} onSelect={selectApplication} onDelete={(application, deletionType) => { setDeleteError(''); setDeleteTarget({ application, deletionType }) }} onRestore={(application) => { setRestoreError(null); setRestoreTarget(application) }} onClearFilters={clearFilters} onShowActive={() => changeDeletedView(false)} />
+          : <ApplicationList applications={applications} loading={loading} selectedIds={selectedIds} deletedView={deletedView} restoringId={restoringId} hasFilters={hasFilters} onToggle={toggleApplication} onSelect={selectApplication} onDelete={(application, deletionType) => { setDeleteError(''); setDeleteTarget({ application, deletionType }) }} onRestore={(application) => { setRestoreError(null); setRestoreTarget(application) }} onClearFilters={clearFilters} onShowActive={() => changeDeletedView(false)} />}
         {!error && !loading && pagination.total > 0 && <nav className="pagination" aria-label="Application pages">
           <span>Showing {(pagination.page - 1) * pagination.page_size + 1}–{Math.min(pagination.page * pagination.page_size, pagination.total)} of {pagination.total}</span>
           <div><button type="button" disabled={!pagination.has_previous} onClick={() => { setPage((current) => Math.max(1, current - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}><ChevronLeft size={17} /> Previous</button><span>Page {pagination.page} of {pagination.total_pages}</span><button type="button" disabled={!pagination.has_next} onClick={() => { setPage((current) => current + 1); window.scrollTo({ top: 0, behavior: 'smooth' }) }}>Next <ChevronRight size={17} /></button></div>

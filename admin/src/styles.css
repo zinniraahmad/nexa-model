@@ -158,6 +158,32 @@ select { border: 1px solid var(--line); border-radius: 8px; padding: 0 38px 0 14
 .selection-toolbar select { height: 38px; }
 .selection-toolbar button { min-height: 38px; }
 .selection-toolbar > span { color: var(--muted); }
+.application-view-toggle { display: flex; justify-content: flex-end; gap: 4px; margin: 0 0 10px; }
+.application-view-toggle button { min-height: 38px; display: inline-flex; align-items: center; gap: 7px; padding: 0 13px; border: 1px solid var(--line); color: var(--muted); background: var(--surface); cursor: pointer; }
+.application-view-toggle button:first-child { border-radius: 8px 0 0 8px; }
+.application-view-toggle button:last-child { border-radius: 0 8px 8px 0; }
+.application-view-toggle button.active { color: var(--ink); background: var(--input); box-shadow: inset 0 0 0 1px var(--soft-muted); }
+.application-icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.candidate-icon-card { position: relative; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.candidate-icon-card:hover { border-color: var(--soft-muted); }
+.selected-icon-card { box-shadow: inset 0 0 0 2px #77746a; }
+.retention-icon-card { box-shadow: inset 0 0 0 2px #d09524; }
+.icon-checkbox { position: absolute; z-index: 2; top: 10px; left: 10px; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 7px; background: rgba(16,17,14,.78); cursor: pointer; }
+.candidate-icon-profile { width: 100%; display: flex; flex-direction: column; gap: 11px; padding: 0 0 12px; border: 0; color: var(--ink); background: transparent; cursor: pointer; }
+.candidate-icon-profile:disabled { cursor: default; }
+.candidate-icon-profile:focus-visible { outline: 2px solid #817d70; outline-offset: -2px; }
+.candidate-icon-photo { width: 100%; aspect-ratio: 3 / 4; display: grid; overflow: hidden; background: var(--input); }
+.candidate-icon-photo img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.candidate-icon-photo-missing { display: grid; place-items: center; align-content: center; gap: 8px; color: var(--soft-muted); }
+.candidate-icon-photo-missing small { font-size: 12px; }
+.candidate-icon-profile > strong { min-height: 42px; display: -webkit-box; padding: 0 12px; overflow: hidden; font: 600 15px/1.4 'Manrope'; text-align: center; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.candidate-icon-footer { min-height: 57px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line-soft); }
+.candidate-icon-footer .status { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.candidate-icon-footer .row-actions { margin-left: auto; }
+.candidate-icon-footer .delete-row-button, .candidate-icon-footer .restore-row-button { width: 36px; height: 36px; }
+.candidate-icon-skeleton { padding-bottom: 12px; }
+.candidate-icon-skeleton .skeleton-block { width: 100%; aspect-ratio: 3 / 4; border-radius: 0; }
+.candidate-icon-skeleton .skeleton-line { width: 70%; height: 16px; margin: 13px auto 0; }
 .application-list { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .application-list-header { display: grid; grid-template-columns: 44px minmax(210px, 2fr) 1.1fr 58px 70px 125px 160px 98px; gap: 14px; align-items: center; padding: 11px 14px 11px 18px; border-bottom: 1px solid var(--line); color: var(--soft-muted); background: var(--input); font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .application-list-header.deleted-list-header { grid-template-columns: minmax(210px, 2fr) 1.1fr 58px 70px 125px 160px 98px; }
@@ -244,7 +270,7 @@ select { border: 1px solid var(--line); border-radius: 8px; padding: 0 38px 0 14
 .skeleton-hero-content { min-width: 0; display: flex; flex-direction: column; justify-content: center; }
 .skeleton-reference { width: min(235px, 62%); height: 32px; margin-bottom: 28px; }
 .skeleton-name { width: min(560px, 76%); height: clamp(42px, 5vw, 62px); margin-bottom: 28px; }
-.skeleton-facts { display: grid; grid-template-columns: minmax(120px, .45fr) minmax(180px, 1fr); gap: 14px; margin-bottom: 20px; }
+.skeleton-facts { display: grid; grid-template-columns: minmax(90px, .4fr) minmax(170px, 1fr) minmax(135px, .65fr) minmax(95px, .45fr) minmax(110px, .5fr); gap: 14px; margin-bottom: 20px; }
 .skeleton-facts .skeleton-block { height: 65px; }
 .skeleton-contact { width: min(510px, 68%); height: 22px; margin-bottom: 24px; }
 .skeleton-date { width: min(430px, 58%); height: 16px; }
@@ -277,7 +303,7 @@ select { border: 1px solid var(--line); border-radius: 8px; padding: 0 38px 0 14
 .applicant-hero-content { min-width: 0; }
 .hero-meta-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 26px; }
 .applicant-hero h2 { max-width: 950px; margin: 0 0 28px; font-size: clamp(36px, calc(5vw - 3px), 63px); line-height: 1.02; letter-spacing: -.05em; }
-.hero-facts { display: grid; grid-template-columns: minmax(120px, .45fr) minmax(180px, 1fr); gap: 14px; margin-bottom: 20px; }
+.hero-facts { display: grid; grid-template-columns: minmax(90px, .4fr) minmax(170px, 1fr) minmax(135px, .65fr) minmax(95px, .45fr) minmax(110px, .5fr); gap: 14px; margin-bottom: 20px; }
 .hero-facts > div { display: grid; gap: 4px; padding: 11px 15px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--input); }
 .hero-facts span { color: var(--soft-muted); font-size: 13px; font-weight: 600; }
 .hero-facts strong { display: flex; align-items: center; gap: 7px; font: 600 18px 'Manrope'; }
@@ -395,12 +421,16 @@ dd { margin: 0; font-size: 18px; line-height: 1.55; overflow-wrap: anywhere; }
 .cancel-button { border: 1px solid var(--line); background: var(--input); color: var(--ink); }
 .delete-confirm-button { border: 1px solid #a93838; background: #a93838; color: white; }
 .shortlist-dialog .dialog-icon { background: rgba(74,146,85,.13); color: #4a9255; }
+.reject-dialog .dialog-icon { background: rgba(169,56,56,.13); color: #c95757; }
 .restore-dialog .dialog-icon { background: rgba(74,146,85,.13); color: #4a9255; }
 .restore-dialog .dialog-actions { grid-template-columns: .8fr 1.2fr; }
 .restore-dialog .cancel-button, .restore-dialog .restore-confirm-button { min-width: 0; font-size: 17px; white-space: nowrap; }
 .shortlist-dialog > p { text-align: left; }
+.reject-dialog > p { text-align: left; }
 .shortlist-confirm-button { border: 1px solid #397746; background: #397746; color: #fff; }
 .shortlist-confirm-button:disabled { opacity: .65; cursor: wait; }
+.reject-confirm-button { border: 1px solid #a93838; background: #a93838; color: #fff; }
+.reject-confirm-button:disabled { opacity: .65; cursor: wait; }
 .restore-confirm-button { border: 1px solid #397746; background: #397746; color: #fff; }
 .admin-toast { position: fixed; right: 22px; bottom: 22px; z-index: 80; width: min(420px, calc(100% - 32px)); display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 14px 15px; border: 1px solid #4d8055; border-radius: 9px; color: #e8f7ea; background: #294e30; box-shadow: 0 16px 45px rgba(0,0,0,.28); font-size: 15px; }
 .admin-toast button { display: grid; place-items: center; padding: 4px; border: 0; color: inherit; background: transparent; cursor: pointer; }
@@ -472,7 +502,7 @@ dd { margin: 0; font-size: 18px; line-height: 1.55; overflow-wrap: anywhere; }
   .account { font-size: 0; }
   .admin-layout, .admin-layout.sidebar-collapsed { display: block; }
   .admin-sidebar { position: sticky; top: 0; z-index: 10; width: 100%; min-height: 0; height: auto; padding: 8px 14px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .admin-sidebar nav { position: static; height: auto; display: grid; grid-template-columns: 44px repeat(3, minmax(0, 1fr)); flex-direction: row; }
+  .admin-sidebar nav { position: static; height: auto; display: grid; grid-template-columns: 44px repeat(5, minmax(0, 1fr)); flex-direction: row; }
   .admin-sidebar a { min-width: 0; min-height: 44px; justify-content: center; gap: 6px; padding-inline: 6px; font-size: 12px; }
   .admin-sidebar a span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .admin-sidebar a.active { box-shadow: inset 0 -3px 0 var(--accent); }
@@ -512,6 +542,12 @@ dd { margin: 0; font-size: 18px; line-height: 1.55; overflow-wrap: anywhere; }
   .selection-toolbar { align-items: stretch; flex-direction: column; padding: 12px; }
   .selection-toolbar > div { display: grid; grid-template-columns: 1fr; width: 100%; margin-left: 0; }
   .selection-toolbar > span { text-align: center; }
+  .application-view-toggle { justify-content: stretch; }
+  .application-view-toggle button { flex: 1; justify-content: center; }
+  .application-icon-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .candidate-icon-profile > strong { font-size: 14px; }
+  .candidate-icon-footer { padding-inline: 7px; }
+  .candidate-icon-footer .status { padding-inline: 8px; font-size: 10px; }
   .pagination { align-items: stretch; flex-direction: column; text-align: center; }
   .pagination > div { justify-content: space-between; }
   .detail-navigation { align-items: flex-start; gap: 14px; }
@@ -543,3 +579,153 @@ dd { margin: 0; font-size: 18px; line-height: 1.55; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) {
   .skeleton-line::after, .skeleton-block::after { animation: none; }
 }
+/* Training evaluation and live session console */
+.training-page { max-width: 1480px; margin: 0 auto; }.candidate-picker { min-width: min(360px, 100%); display: grid; gap: 7px; color: var(--muted); font-size: 13px; font-weight: 600; }.candidate-picker select { min-height: 46px; color: var(--ink); background: var(--input); }
+.training-error { display: flex; align-items: center; gap: 9px; padding: 13px 15px; border: 1px solid #7e4843; border-radius: 8px; color: #d8837b; background: rgba(126,72,67,.12); }
+.training-welcome { min-height: 300px; display: grid; place-content: center; justify-items: center; text-align: center; color: var(--muted); }.training-welcome svg { width: 36px; height: 36px; color: var(--accent); }.training-welcome h2 { margin: 16px 0 4px; color: var(--ink); }
+.trainee-training-header, .training-session-header, .progress-link-controls { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 18px; padding: 22px 24px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }.trainee-training-header small { color: var(--soft-muted); letter-spacing: .15em; }.trainee-training-header h2, .training-session-header h2, .progress-link-controls h2 { margin: 5px 0; font-size: 28px; }.trainee-training-header p, .training-session-header p, .progress-link-controls p { margin: 0; color: var(--muted); }
+.trainee-training-header button, .training-primary-action, .training-inline-actions > button, .one-time-link button, .attempt-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; border: 0; border-radius: 7px; padding: 9px 14px; color: #fff; background: var(--accent); font-weight: 700; cursor: pointer; }.training-primary-action { align-self: center; }.training-inline-actions button.secondary-button { color: var(--ink); background: var(--line-soft); }.training-inline-actions button.complete-action, .training-inline-actions button.publish-action, .training-inline-actions button.approval-action, .attempt-actions button.approval-action { background: #4e8759; }.training-inline-actions button.danger-button { background: #974d48; }button:disabled { cursor: not-allowed; opacity: .55; }
+.progress-link-controls { align-items: flex-start; }.progress-link-controls > div:first-child { min-width: 210px; }.progress-link-controls small { color: var(--soft-muted); }.one-time-link { flex: 1; display: flex; align-items: end; gap: 8px; }.one-time-link label { flex: 1; display: grid; gap: 6px; color: var(--muted); font-size: 12px; }.one-time-link input { width: 100%; min-width: 0; color: var(--ink); background: var(--input); }.training-inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.training-status { display: inline-flex; align-items: center; width: max-content; padding: 4px 7px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; }.status-in_progress, .status-ready_to_publish { border-color: #8c6b34; color: #d6a852; }.status-completed, .status-approved, .status-published, .status-active { border-color: #477553; color: #70b17f; }.status-redo_required, .status-invalid, .status-revoked { border-color: #844943; color: #d2766e; }.status-locked { opacity: .6; }
+.training-session-tabs { display: flex; gap: 8px; overflow-x: auto; margin: 26px 0 12px; }.training-session-tabs button { min-width: 145px; display: grid; gap: 7px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--surface); text-align: left; cursor: pointer; }.training-session-tabs button.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }.training-session-tabs button.add-training-tab { border-style: dashed; color: var(--accent); }.training-session-tabs button.add-training-tab small { display: flex; align-items: center; gap: 5px; color: inherit; font-weight: 700; }
+.training-session-header { margin-bottom: 10px; }.pose-stepper { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 8px; margin-bottom: 18px; overflow-x: auto; }.pose-stepper button { min-width: 120px; display: grid; justify-items: start; gap: 7px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--surface); text-align: left; cursor: pointer; }.pose-stepper button.active { border-color: var(--accent); }.pose-stepper button:disabled.active { border-color: var(--line); }.pose-stepper button > span { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: var(--accent); }.pose-stepper button small { color: var(--soft-muted); }
+.pose-console, .session-review { margin-bottom: 20px; padding: clamp(18px, 3vw, 28px); border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }.pose-live-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }.pose-live-header h2 { display: inline-block; margin: 3px 12px 8px 0; font-size: 34px; }.pose-live-header > div:last-child { display: flex; align-items: center; gap: 7px; color: var(--muted); }.pose-reference { margin: 20px 0; }.pose-reference img { max-width: min(520px, 100%); max-height: 520px; display: block; border-radius: 8px; object-fit: contain; }.pose-reference figcaption { margin-top: 6px; color: var(--soft-muted); font-size: 12px; }.training-instructions { margin: 18px 0; padding: 17px; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--line-soft); }.training-instructions h3 { margin: 0 0 8px; }.training-instructions p { margin: 0; white-space: pre-wrap; line-height: 1.6; }
+.training-attempt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 22px; }.training-attempts { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 9px; }.training-section-heading, .training-review-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; }.training-section-heading h3 { margin: 3px 0 15px; }.training-section-heading .secondary-button { display: inline-flex; align-items: center; gap: 5px; }.training-attempts ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }.training-attempts li { padding: 13px; border-radius: 7px; background: var(--line-soft); }.training-attempts li > div:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }.training-attempts li p { margin: 8px 0 0; color: var(--muted); font-size: 12px; }.training-attempts .private-note { color: #c78c70; }.attempt-actions { display: flex; gap: 6px; margin-top: 12px; }.attempt-actions button { min-height: 32px; padding: 6px 9px; font-size: 11px; }.attempt-actions button:nth-child(2) { background: #9a7030; }.attempt-actions button:nth-child(3) { background: #974d48; }.training-empty { color: var(--soft-muted); }
+.training-review-box { margin-top: 12px; padding: 14px; border: 1px solid #9a7030; border-radius: 8px; background: var(--input); }.training-review-heading button { border: 0; color: var(--ink); background: none; }.training-review-box fieldset { margin: 14px 0; border: 0; padding: 0; }.training-review-box legend, .training-review-box > label { display: grid; gap: 6px; margin: 12px 0; color: var(--muted); font-size: 12px; font-weight: 600; }.reason-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }.reason-grid label { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 11px; }.training-review-box textarea, .training-review-box select { color: var(--ink); background: var(--surface); }
+.pose-completion-check { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 20px 0; }.pose-completion-check h3 { grid-column: 1 / -1; }.pose-completion-check div { display: grid; gap: 6px; padding: 13px; border-radius: 7px; background: var(--line-soft); }.pose-completion-check span { color: var(--soft-muted); font-size: 11px; }
+.training-evaluation { padding-top: 22px; border-top: 1px solid var(--line); }.training-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.training-form-grid label, .score-grid label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 600; }.training-form-grid .wide { grid-column: 1 / -1; }.training-form-grid input, .training-form-grid textarea, .score-grid select { width: 100%; color: var(--ink); background: var(--input); }.training-check { display: flex !important; flex-direction: row; align-items: center; }.training-check input { width: auto; }.trainee-field { padding: 12px; border: 1px solid #476e50; border-radius: 8px; }.score-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin: 18px 0; }.training-evaluation .training-inline-actions, .session-review .training-inline-actions { margin-top: 18px; }
+.session-review { margin-top: 20px; }.training-preview { margin-top: 22px; padding: 18px; border: 1px solid var(--accent); border-radius: 9px; background: #0f0f0e; }.training-preview .progress-session-heading { width: 100%; display: flex; justify-content: space-between; padding: 16px; border: 0; color: #f1ede4; background: #171715; }.training-preview .progress-session-content { padding: 16px; color: #f1ede4; }.training-preview .progress-metrics, .training-preview .progress-feedback-grid, .training-preview .progress-scores { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }.training-preview .progress-metrics > div, .training-preview .progress-feedback-grid > section, .training-preview .progress-scores > div { padding: 12px; background: #20201d; }.training-preview p, .training-preview dt { color: #aaa298; }.training-preview dd { margin: 4px 0; }.training-preview .progress-poses details { border-top: 1px solid #333; }.training-preview summary { padding: 12px 0; cursor: pointer; }.training-preview .progress-scores > div { display: flex; justify-content: space-between; }
+@media (max-width: 950px) { .training-attempt-grid, .training-form-grid { grid-template-columns: 1fr; }.training-form-grid .wide { grid-column: auto; }.score-grid { grid-template-columns: repeat(2, 1fr); }.pose-completion-check { grid-template-columns: repeat(2, 1fr); }.progress-link-controls { flex-wrap: wrap; }.one-time-link { flex-basis: 100%; } }
+@media (max-width: 620px) { .trainee-training-header, .training-session-header, .progress-link-controls, .pose-live-header { align-items: stretch; flex-direction: column; }.score-grid, .pose-completion-check, .reason-grid { grid-template-columns: 1fr; }.pose-stepper { grid-template-columns: repeat(5, 110px); }.training-inline-actions > button { width: 100%; }.one-time-link { align-items: stretch; flex-direction: column; } }
+
+/* Consistent, readable type scale throughout Training */
+.training-page { font-size: 16px; line-height: 1.55; }
+.training-page .eyebrow { font-size: 13px; line-height: 1.4; }
+.training-page label, .training-page legend, .training-review-box > label, .training-form-grid label, .score-grid label, .candidate-picker { font-size: 15px; line-height: 1.45; }
+.training-page input, .training-page select, .training-page textarea, .training-page button { font-size: 16px; line-height: 1.4; }
+.training-page input, .training-page select { min-height: 44px; }
+.training-page textarea { padding: 12px 14px; }
+.training-form-grid input:not([type='file']) { height: 44px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 7px; outline: 0; color: var(--ink); background: var(--input); transition: border-color .16s ease, box-shadow .16s ease; }
+.training-form-grid input:not([type='file']):hover { border-color: var(--soft-muted); }
+.training-form-grid input:not([type='file']):focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+.training-page small, .training-page .training-status, .training-page .pose-stepper button small { font-size: 13px; line-height: 1.4; }
+.training-page .training-status { padding: 5px 9px; }
+.training-page .training-attempts li p, .training-page .reason-grid label, .training-page .pose-completion-check span { font-size: 14px; line-height: 1.5; }
+.training-page .attempt-actions button { min-height: 38px; font-size: 14px; }
+.training-page .training-inline-actions > button, .training-page .training-primary-action, .training-page .trainee-training-header > button { min-height: 46px; padding: 11px 16px; font-size: 15px; }
+.training-page .training-inline-actions > button.reset-evaluation-action { border: 1px solid #8b625d; color: #e3aaa3; background: rgba(151,77,72,.12); }
+.training-page .training-inline-actions > button.reset-evaluation-action:hover { border-color: #b97770; background: rgba(151,77,72,.22); }
+.evaluation-reference { width: min(242px, 100%); display: grid; justify-items: center; margin: 4px auto 30px; text-align: center; }
+.evaluation-reference img { width: auto; max-width: 100%; max-height: 288px; margin-inline: auto; box-shadow: 0 12px 38px rgba(0,0,0,.2); }
+.evaluation-reference figcaption { margin-top: 10px; font-size: 14px; }
+.progress-link-controls > .training-inline-actions { width: min(100%, 390px); flex-wrap: nowrap; align-self: center; }
+.progress-link-controls > .training-inline-actions > button { min-width: 0; flex: 1 1 0; white-space: nowrap; }
+.training-page .training-check { display: flex !important; flex-direction: row; align-items: center; gap: 11px; padding: 11px 0; color: var(--ink); font-size: 17px !important; font-weight: 700 !important; cursor: pointer; }
+.training-page .training-check input[type='checkbox'] { width: 23px !important; height: 23px; min-height: 0 !important; flex: 0 0 23px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.pose-title-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.pose-title-row h2 { margin-right: 0; }
+.pose-title-row .training-primary-action { min-height: 42px; padding: 8px 14px; }
+
+/* Training calendar */
+.training-calendar-page { max-width: 1480px; margin: 0 auto; }
+.calendar-page-heading { align-items: center; }
+.calendar-primary-button { min-height: 46px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; border: 0; border-radius: 8px; color: #fff; background: var(--accent); font-size: 15px; font-weight: 700; cursor: pointer; }
+:root:not([data-theme='dark']) .calendar-primary-button { color: #fff; background: #71601e; }
+.calendar-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: -10px 0 20px; }
+.calendar-summary article { min-width: 0; display: grid; grid-template-columns: 1fr auto; gap: 7px 16px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.calendar-summary span { color: var(--muted); font-size: 14px; font-weight: 600; }
+.calendar-summary strong { grid-row: 1 / 3; grid-column: 2; align-self: center; font: 600 34px/1 'Manrope'; }
+.calendar-summary small { color: var(--soft-muted); font-size: 12px; }
+.calendar-workspace { display: grid; grid-template-columns: minmax(650px, 1fr) minmax(300px, 360px); gap: 16px; align-items: start; }
+.calendar-panel, .calendar-agenda { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
+.calendar-toolbar { min-height: 72px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.calendar-toolbar > div { display: flex; align-items: center; gap: 5px; }
+.calendar-toolbar button, .calendar-agenda header button { width: 40px; height: 40px; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: var(--input); cursor: pointer; }
+.calendar-toolbar button.calendar-today { width: auto; padding: 0 12px; margin-left: 4px; font-size: 13px; font-weight: 700; }
+.calendar-toolbar h2 { margin: 0; font-size: 20px; text-align: center; }
+.calendar-toolbar > span { justify-self: end; color: var(--soft-muted); font-size: 12px; font-weight: 700; }
+.calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.calendar-weekdays { border-bottom: 1px solid var(--line); background: var(--input); }
+.calendar-weekdays span { padding: 10px 8px; color: var(--soft-muted); font-size: 11px; font-weight: 700; letter-spacing: .07em; text-align: center; text-transform: uppercase; }
+.calendar-grid { background: var(--line-soft); gap: 1px; }
+.calendar-day { min-width: 0; min-height: 126px; display: flex; flex-direction: column; gap: 7px; padding: 9px; border: 0; color: var(--ink); background: var(--surface); text-align: left; cursor: pointer; }
+.calendar-day:hover, .calendar-day.selected { background: var(--surface-hover); }
+.calendar-day.selected { box-shadow: inset 0 0 0 2px var(--accent); }
+.calendar-day.outside-month { opacity: .44; }
+.calendar-day-number { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 50%; font-size: 13px; font-weight: 700; }
+.calendar-day.today .calendar-day-number { color: #fff; background: var(--accent); }
+:root[data-theme='dark'] .calendar-day.today .calendar-day-number { color: #1b1a16; }
+.calendar-day-events { min-width: 0; display: grid; gap: 4px; }
+.calendar-event { min-width: 0; display: block; overflow: hidden; padding: 4px 6px; border-left: 3px solid #6b8ea8; border-radius: 3px; color: var(--ink); background: rgba(82, 137, 181, .12); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-event b { margin-right: 5px; font-weight: 700; }
+.calendar-event.event-confirmed { border-color: #4a9255; background: rgba(74, 146, 85, .14); }
+.calendar-event.event-completed { border-color: #77746a; background: var(--line-soft); }
+.calendar-event.event-cancelled, .calendar-event.event-no_show { border-color: #b85a5a; background: rgba(184, 90, 90, .12); text-decoration: line-through; }
+.calendar-day-events > small { color: var(--soft-muted); font-size: 10px; font-weight: 700; }
+.calendar-loading { min-height: 755px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 14px; }
+.calendar-agenda { position: sticky; top: 94px; }
+.calendar-agenda > header { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+.calendar-agenda header p { margin: 0 0 2px; color: var(--soft-muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.calendar-agenda header h2 { margin: 0; font-size: 20px; }
+.agenda-empty { min-height: 310px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 28px; color: var(--muted); text-align: center; }
+.agenda-empty > svg { color: var(--accent); }
+.agenda-empty strong { margin: 14px 0 3px; color: var(--ink); font: 600 17px 'Manrope'; }
+.agenda-empty p { margin: 0 0 16px; font-size: 13px; line-height: 1.5; }
+.agenda-empty button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--input); cursor: pointer; font-size: 13px; font-weight: 700; }
+.agenda-list { display: grid; max-height: calc(100vh - 210px); overflow-y: auto; }
+.agenda-list > article { display: grid; grid-template-columns: 66px 1fr; gap: 12px; padding: 17px 16px; border-bottom: 1px solid var(--line-soft); }
+.agenda-time { display: grid; align-content: start; gap: 3px; }
+.agenda-time strong { font-size: 13px; }
+.agenda-time span { color: var(--soft-muted); font-size: 11px; }
+.agenda-details { min-width: 0; }
+.agenda-details h3 { margin: 8px 0 7px; font-size: 17px; }
+.agenda-details p { display: flex; align-items: center; gap: 6px; margin: 4px 0; color: var(--muted); font-size: 12px; }
+.agenda-details > small { display: block; margin-top: 9px; padding: 8px; border-radius: 5px; color: var(--muted); background: var(--input); font-size: 11px; line-height: 1.45; }
+.appointment-status { display: inline-flex; padding: 4px 7px; border-radius: 20px; color: #285d84; background: #dceaf4; font-size: 9px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.appointment-confirmed { color: #286331; background: #dceede; }
+.appointment-completed { color: #655f56; background: #e7e3dc; }
+.appointment-cancelled, .appointment-no_show { color: #8a3333; background: #f2dddd; }
+.agenda-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.agenda-actions button, .agenda-actions a { min-height: 34px; display: inline-flex; align-items: center; gap: 5px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--input); text-decoration: none; cursor: pointer; font-size: 11px; font-weight: 700; }
+.agenda-actions a { color: #2f7041; }
+.calendar-dialog-backdrop { position: fixed; z-index: 60; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(8, 9, 7, .68); backdrop-filter: blur(3px); }
+.calendar-dialog { width: min(620px, 100%); max-height: calc(100vh - 40px); overflow-y: auto; padding: 24px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: var(--surface); box-shadow: 0 24px 80px rgba(0,0,0,.35); }
+.calendar-dialog > header { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+.calendar-dialog h2 { margin: 0; font-size: 28px; }
+.calendar-dialog > header button { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--ink); background: var(--input); cursor: pointer; }
+.appointment-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.appointment-form-grid label { min-width: 0; display: grid; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 700; }
+.appointment-form-grid .wide { grid-column: 1 / -1; }
+.appointment-form-grid input, .appointment-form-grid select, .appointment-form-grid textarea { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: var(--input); outline: 0; }
+.appointment-form-grid textarea { resize: vertical; }
+.appointment-form-grid input:focus, .appointment-form-grid select:focus, .appointment-form-grid textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.calendar-dialog > footer { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
+.calendar-dialog > footer .secondary-button { min-height: 46px; padding: 10px 16px; border-radius: 8px; cursor: pointer; }
+.calendar-form-error { margin: 15px 0 0; color: #c6655c; font-size: 13px; }
+.training-calendar-page > .training-error { justify-content: space-between; }
+.training-calendar-page > .training-error button { border: 0; color: inherit; background: transparent; font-weight: 700; text-decoration: underline; cursor: pointer; }
+
+@media (max-width: 1120px) {
+  .calendar-workspace { grid-template-columns: 1fr; }
+  .calendar-agenda { position: static; }
+  .agenda-list { max-height: none; }
+}
+@media (max-width: 760px) {
+  .calendar-page-heading { align-items: stretch; flex-direction: column; }
+  .calendar-page-heading .calendar-primary-button { width: 100%; }
+  .calendar-summary { grid-template-columns: 1fr; }
+  .calendar-toolbar { grid-template-columns: 1fr auto; }
+  .calendar-toolbar h2 { grid-row: 1; grid-column: 1; text-align: left; }
+  .calendar-toolbar > div { grid-row: 2; grid-column: 1 / -1; }
+  .calendar-toolbar > span { grid-row: 1; grid-column: 2; }
+  .calendar-weekdays span { padding-inline: 2px; font-size: 9px; }
+  .calendar-day { min-height: 82px; padding: 5px; }
+  .calendar-event { width: 7px; height: 7px; display: inline-block; padding: 0; border: 0; border-radius: 50%; background: #5289b5; color: transparent; }
+  .calendar-event.event-confirmed { background: #4a9255; }
+  .calendar-event.event-cancelled, .calendar-event.event-no_show { background: #b85a5a; }
+  .calendar-day-events { display: flex; flex-wrap: wrap; gap: 3px; }
+  .calendar-day-events > small { width: 100%; }
+  .appointment-form-grid { grid-template-columns: 1fr; }
+  .appointment-form-grid .wide { grid-column: auto; }
+}
+.session-completion-help { margin: 12px 0 0; color: var(--soft-muted); font-size: 14px; }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { DatabaseSync } from 'node:sqlite'
-import adminWorker, { ADMIN_PAGE_SIZE, enforceAdminRateLimit, handleApi, signPhotoUrls } from '../admin/worker.js'
+import adminWorker, { enforceAdminRateLimit, handleApi, signPhotoUrls } from '../admin/worker.js'
 import { requireAdmin } from '../admin/access.js'
 import { recordOperationalFailure, safeContext } from '../admin/observability.js'
 
@@ -59,6 +59,7 @@ function createTestDatabase() {
   database.exec(readFileSync(new URL('../migrations/0016_admin_security_operations.sql', import.meta.url), 'utf8'))
   database.exec(readFileSync(new URL('../migrations/0017_email_analytics.sql', import.meta.url), 'utf8'))
   database.exec(readFileSync(new URL('../migrations/0018_website_controls.sql', import.meta.url), 'utf8'))
+  database.exec(readFileSync(new URL('../migrations/0020_rejected_email.sql', import.meta.url), 'utf8'))
   database.exec(`
     INSERT INTO applicants (application_id, full_name, email, phone, current_location)
     VALUES
@@ -122,7 +123,7 @@ test('admin list endpoint enforces fixed server-side pagination', async () => {
   const response = await callApi({ DB }, '/api/admin/applications?page=2')
   const body = await response.json()
   assert.equal(response.status, 200)
-  assert.equal(ADMIN_PAGE_SIZE, 50)
+  assert.equal(body.pagination.page_size, 50)
   assert.equal(body.applications.length, 5)
   assert.deepEqual(body.pagination, { page: 2, page_size: 50, total: 55, total_pages: 2, has_previous: true, has_next: false })
 })
@@ -172,6 +173,41 @@ test('admin analytics endpoint returns complete date ranges plus email and Image
   assert.match(body.imagekit_usage.bandwidth_resets_on, /^\d{4}-\d{2}-01$/)
   assert.equal(body.imagekit_usage.limits.bandwidth_bytes, 20_000_000_000)
   assert.equal(body.imagekit_usage.limits.storage_bytes, 3_000_000_000)
+})
+
+test('admin list returns a signed front-facing thumbnail for icon view', async () => {
+  const DB = createTestDatabase()
+  DB.raw.prepare('INSERT INTO applicant_photos (file_id, application_id, file_name, file_url, photo_type) VALUES (?, ?, ?, ?, ?)')
+    .run('front-photo', 'app-alice', 'front.jpg', '/applications/app-alice/front.jpg', 'front_facing')
+  DB.raw.prepare('INSERT INTO applicant_photos (file_id, application_id, file_name, file_url, photo_type) VALUES (?, ?, ?, ?, ?)')
+    .run('side-photo', 'app-alice', 'side.jpg', '/applications/app-alice/side.jpg', 'side_profile_1')
+
+  const response = await callApi({ DB, IMAGEKIT_PRIVATE_KEY: 'private_test_key', IMAGEKIT_URL_ENDPOINT: 'https://ik.imagekit.io/test' }, '/api/admin/applications?search=Alice')
+  const body = await response.json()
+
+  assert.equal(response.status, 200)
+  assert.match(body.applications[0].profile_photo_url, /front\.jpg/)
+  assert.match(body.applications[0].profile_photo_url, /ik-t=/)
+  assert.doesNotMatch(body.applications[0].profile_photo_url, /side\.jpg/)
+})
+
+test('local Admin authentication bypass is restricted to loopback hosts', async () => {
+  const local = await requireAdmin(new Request('http://127.0.0.1:8788/api/admin/session'), {
+    LOCAL_DEVELOPMENT: 'true',
+    LOCAL_ADMIN_EMAIL: 'LOCAL-ADMIN@NEXA.TEST',
+  })
+  assert.deepEqual(local, { email: 'local-admin@nexa.test' })
+
+  const rewrittenLocal = await requireAdmin(new Request('https://onlyadmin.nexa-model.com/api/admin/session', {
+    headers: { Host: '127.0.0.1:8788' },
+  }), { LOCAL_DEVELOPMENT: 'true', LOCAL_ADMIN_EMAIL: 'local-admin@nexa.test' })
+  assert.deepEqual(rewrittenLocal, { email: 'local-admin@nexa.test' })
+
+  const production = await requireAdmin(new Request('https://onlyadmin.nexa-model.com/api/admin/session'), {
+    LOCAL_ADMIN_EMAIL: 'local-admin@nexa.test',
+  })
+  assert.equal(production.error.status, 503)
+  assert.equal((await production.error.json()).code, 'AUTH_NOT_CONFIGURED')
 })
 
 test('admin analytics remains available when ImageKit usage cannot be loaded', async (context) => {
@@ -243,6 +279,33 @@ test('admin update endpoint changes status and writes review history', async () 
   assert.deepEqual({ ...DB.raw.prepare('SELECT previous_status, new_status, changed_by FROM application_review_history').get() }, {
     previous_status: 'submitted', new_status: 'reviewing', changed_by: 'admin@example.test',
   })
+})
+
+test('rejecting requires confirmation, emails the candidate, then changes status', async (context) => {
+  const DB = createTestDatabase()
+  const unconfirmed = await callApi({ DB }, '/api/admin/applications/app-alice', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'rejected', notes: '', tags: [] }),
+  })
+  assert.equal(unconfirmed.status, 400)
+  assert.equal((await unconfirmed.json()).code, 'REJECTION_CONFIRMATION_REQUIRED')
+  assert.equal(DB.raw.prepare('SELECT application_status FROM applicant_details WHERE application_id = ?').get('app-alice').application_status, 'submitted')
+
+  context.mock.method(globalThis, 'fetch', async (_url, init) => {
+    const payload = JSON.parse(init.body)
+    assert.deepEqual(payload.to, ['alice@example.test'])
+    assert.equal(payload.from, 'Nexa Model Admin <applications@updates.nexa-model.com>')
+    assert.match(payload.text, /Nexa Model Admin/)
+    return Response.json({ id: 'rejection-email-1' })
+  })
+  const confirmed = await callApi({ DB, RESEND_API_KEY: 'test-resend-key' }, '/api/admin/applications/app-alice', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'rejected', notes: '', tags: [], send_rejected_email: true }),
+  })
+  assert.equal(confirmed.status, 200)
+  assert.equal(DB.raw.prepare('SELECT application_status FROM applicant_details WHERE application_id = ?').get('app-alice').application_status, 'rejected')
+  assert.ok(DB.raw.prepare('SELECT rejected_email_sent_at FROM applicant_details WHERE application_id = ?').get('app-alice').rejected_email_sent_at)
+  assert.equal(DB.raw.prepare("SELECT COUNT(*) AS count FROM email_messages WHERE message_type = 'candidate_rejected' AND status = 'accepted'").get().count, 1)
 })
 
 test('admin deletion endpoints enforce confirmation, soft delete, restore and delayed purge', async () => {

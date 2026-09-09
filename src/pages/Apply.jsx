@@ -9,7 +9,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024
 const acceptedTypes = ['image/jpeg', 'image/png', 'image/webp']
 
 const processSteps = [
-  ['01', 'Submit Your Application', 'Hantar Permohonan Anda', 'Complete this form with your personal information, modelling profile, availability and required photos.', 'Lengkapkan borang ini dengan maklumat peribadi, profil modelling, ketersediaan serta gambar yang diperlukan.'],
+  ['01', 'Submit Your Application', 'Hantar Permohonan Anda', 'Complete this form with your personal information, modelling profile and availability. Photos are optional but recommended.', 'Lengkapkan borang ini dengan maklumat peribadi, profil modelling dan ketersediaan. Gambar adalah pilihan tetapi disyorkan.'],
   ['02', 'Profile Screening', 'Semakan Profil', 'Nexa will review submitted profiles based on the requirements of available modelling opportunities.', 'Pihak Nexa akan menyemak profil yang dihantar berdasarkan keperluan peluang modelling yang tersedia.'],
   ['03', 'Shortlisting', 'Senarai Pendek', 'Candidates who meet the initial requirements will be shortlisted and contacted through WhatsApp.', 'Calon yang memenuhi keperluan awal akan disenarai pendek dan dihubungi melalui WhatsApp.'],
   ['04', 'Real-Time Training & Assessment', 'Latihan & Penilaian Secara Real-Time', 'Shortlisted candidates will undergo real-time pose training and assessment from home or another suitable location.', 'Calon yang disenarai pendek akan menjalani latihan pose dan penilaian secara real-time dari rumah atau lokasi yang sesuai.'],

@@ -38,6 +38,10 @@ async function getPublicKey(teamDomain, keyId) {
 }
 
 export async function requireAdmin(request, env) {
+  if (env.LOCAL_DEVELOPMENT === 'true' && env.LOCAL_ADMIN_EMAIL) {
+    return { email: String(env.LOCAL_ADMIN_EMAIL).trim().toLowerCase() }
+  }
+
   if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) {
     return { error: apiJson({ error: 'Admin authentication is not configured.', code: 'AUTH_NOT_CONFIGURED' }, { status: 503 }) }
   }

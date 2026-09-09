@@ -1,4 +1,6 @@
 User-agent: *
 Allow: /
+Disallow: /progress/
+Disallow: /api/public/progress/
 
 Sitemap: https://nexa-model.com/sitemap.xml

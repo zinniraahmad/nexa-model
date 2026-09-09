@@ -26,6 +26,11 @@
 
   "ratelimits": [
     {
+      "name": "PROGRESS_RATE_LIMITER",
+      "namespace_id": "31006",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
       "name": "APPLY_RATE_LIMITER",
       "namespace_id": "31002",
       "simple": { "limit": 10, "period": 60 }

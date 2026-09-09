@@ -96,7 +96,7 @@ function PhotoPicker({ field, files = [], uploadedCount = 0, onSelect, onClear }
   const readyCount = uploadedCount + files.length
   const countLabel = readyCount
     ? `${readyCount}/${field.max} ready${uploadedCount ? ` · ${uploadedCount} already uploaded` : ''} — tap to add more`
-    : field.min === field.max ? `${field.min} photo(s) required` : `${field.min}–${field.max} photo(s)`
+    : field.recommended === field.max ? `${field.recommended} photo(s) recommended` : `${field.recommended}–${field.max} photo(s) recommended`
   return <div className="photo-field-item">
     <label className="upload-zone compact-upload">
       <ImagePlus size={25} />
@@ -434,11 +434,7 @@ export default function TalentApplication() {
   }
 
   function continueFromPhotos() {
-    const missing = photoFields.find((field) => {
-      const uploadedCount = existingPhotoTypes.filter((type) => type.startsWith(`${field.key}_`)).length
-      return field.required && uploadedCount + (photos[field.key]?.length || 0) < field.min
-    })
-    if (missing) return setMessage(`${missing.label} requires at least ${missing.min} photo(s).`)
+    setMessage('')
     moveTo(declarationStep)
   }
 
@@ -573,7 +569,7 @@ export default function TalentApplication() {
       {!alreadySubmitted && step === 0 && <Introduction accepted={introductionAccepted} setAccepted={setIntroductionAccepted} onContinue={() => moveTo(1)} />}
       {!alreadySubmitted && step >= 1 && step <= applicationSections.length && <FormSection section={applicationSections[step - 1]} answers={answers} setAnswer={setAnswer} onBack={() => moveTo(step - 1)} onNext={continueSection} submitting={step === 1 && submitting} nextLabel="Continue">{step === 1 && !applicationCredential() && <TurnstileWidget onToken={setTurnstileToken} resetKey={turnstileResetKey} />}</FormSection>}
 
-      {step === photoStep && <section className="photo-step expanded-form"><header className="form-section-heading"><p className="section-label">SECTION 10</p><h2>Photo Submission</h2><em className="section-title-bm">Penghantaran Gambar</em><p>On a phone, you may select all required photos together or add them one at a time. PNG, JPG and JPEG only. Maximum 10 MB each.</p><p className="bm-text">Di telefon, anda boleh memilih semua gambar yang diperlukan serentak atau menambahnya satu demi satu. PNG, JPG dan JPEG sahaja. Maksimum 10 MB setiap gambar.</p></header><div className="photo-field-list">{photoFields.map((field) => <PhotoPicker key={field.key} field={field} files={photos[field.key]} uploadedCount={existingPhotoTypes.filter((type) => type.startsWith(`${field.key}_`)).length} onSelect={selectPhotos} onClear={clearPhotos} />)}</div><div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(step - 1)}>Back</button><button className="button button-dark" type="button" onClick={continueFromPhotos}>Continue <ArrowRight size={17} /></button></div></section>}
+      {step === photoStep && <section className="photo-step expanded-form"><header className="form-section-heading"><p className="section-label">SECTION 10</p><h2>Photo Submission</h2><em className="section-title-bm">Penghantaran Gambar</em><p>Adding the recommended photos helps us assess your profile. You may continue with fewer photos or no photos. PNG, JPG and JPEG only. Maximum 10 MB each.</p><p className="bm-text">Gambar yang disyorkan membantu kami menilai profil anda. Anda boleh meneruskan dengan bilangan gambar yang kurang atau tanpa gambar. PNG, JPG dan JPEG sahaja. Maksimum 10 MB setiap gambar.</p></header><div className="photo-field-list">{photoFields.map((field) => <PhotoPicker key={field.key} field={field} files={photos[field.key]} uploadedCount={existingPhotoTypes.filter((type) => type.startsWith(`${field.key}_`)).length} onSelect={selectPhotos} onClear={clearPhotos} />)}</div><div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(step - 1)}>Back</button><button className="button button-dark" type="button" onClick={continueFromPhotos}>Continue <ArrowRight size={17} /></button></div></section>}
 
       {step === declarationStep && <form className="application-form expanded-form" onSubmit={submitApplication}><header className="form-section-heading"><p className="section-label">SECTION 11</p><h2>Final Declaration</h2><em className="section-title-bm">Pengisytiharan Akhir</em><p>Review your information carefully before submitting.</p><p className="bm-text">Semak maklumat anda dengan teliti sebelum menghantar.</p><p className="privacy-form-link">Please review the <Link to="/privacy" target="_blank" rel="noreferrer">Privacy Notice / Notis Privasi</Link> before confirming.</p></header><div className="form-fields">{declarationFields.map((field) => <Field key={field.key} field={field} value={answers[field.key]} onChange={(value) => setAnswer(field.key, value)} />)}</div>{!applicationId && <div className="final-security-check"><h3>Final security verification <em>Pengesahan keselamatan akhir</em></h3><p>Complete this check before submitting your application.</p><p className="bm-text">Lengkapkan semakan ini sebelum menghantar permohonan anda.</p><TurnstileWidget onToken={setSubmitTurnstileToken} resetKey={submitTurnstileResetKey} /></div>}{Object.keys(uploadProgress).length > 0 && <div className="upload-progress-panel"><h3>Photo upload status <em>Status muat naik gambar</em></h3>{Object.entries(uploadProgress).map(([key, item]) => <div className={`upload-progress-row ${item.status}`} key={key}><div><span>{item.label}</span><b>{item.status === 'failed' ? 'Failed — retry submission' : `${item.uploaded}/${item.total} · ${item.status}`}</b></div><progress max={item.total} value={item.uploaded} /></div>)}</div>}<div className="application-actions"><button className="underlined-button" type="button" onClick={() => moveTo(photoStep)} disabled={submitting}>Back</button><button className="button button-dark" disabled={submitting}>{submitting ? <><LoaderCircle className="spin" size={17} /> Submitting</> : <>Submit application <ArrowRight size={17} /></>}</button></div></form>}
 

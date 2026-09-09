@@ -111,11 +111,11 @@ export const declarationFields = [
 ]
 
 export const photoFields = [
-  { key: 'front_facing', label: 'Clear Front-Facing Photo', labelBm: 'Gambar Jelas Menghadap Hadapan', min: 1, max: 1, required: true },
-  { key: 'side_profile', label: 'Side-Profile Photo', labelBm: 'Gambar Profil Sisi', min: 3, max: 3, required: true },
-  { key: 'full_body_front', label: 'Full-Body Front Photo', labelBm: 'Gambar Seluruh Badan Dari Hadapan', min: 3, max: 3, required: true },
-  { key: 'full_body_side', label: 'Full-Body Side Photo', labelBm: 'Gambar Seluruh Badan Dari Sisi', min: 3, max: 3, required: true },
-  { key: 'casual_lifestyle', label: 'Recent Casual or Lifestyle Photos', labelBm: 'Gambar Casual atau Lifestyle Terkini', min: 3, max: 3, required: true },
-  { key: 'portfolio', label: 'Previous Modelling or Portfolio Photos', labelBm: 'Gambar Modelling atau Portfolio Terdahulu', min: 3, max: 10, required: true },
-  { key: 'activewear_portfolio', label: 'Existing Activewear / Sportswear Portfolio', labelBm: 'Portfolio Activewear / Sportswear Sedia Ada', min: 3, max: 3, required: true },
+  { key: 'front_facing', label: 'Clear Front-Facing Photo', labelBm: 'Gambar Jelas Menghadap Hadapan', recommended: 1, max: 1 },
+  { key: 'side_profile', label: 'Side-Profile Photo', labelBm: 'Gambar Profil Sisi', recommended: 3, max: 3 },
+  { key: 'full_body_front', label: 'Full-Body Front Photo', labelBm: 'Gambar Seluruh Badan Dari Hadapan', recommended: 3, max: 3 },
+  { key: 'full_body_side', label: 'Full-Body Side Photo', labelBm: 'Gambar Seluruh Badan Dari Sisi', recommended: 3, max: 3 },
+  { key: 'casual_lifestyle', label: 'Recent Casual or Lifestyle Photos', labelBm: 'Gambar Casual atau Lifestyle Terkini', recommended: 3, max: 3 },
+  { key: 'portfolio', label: 'Previous Modelling or Portfolio Photos', labelBm: 'Gambar Modelling atau Portfolio Terdahulu', recommended: 3, max: 10 },
+  { key: 'activewear_portfolio', label: 'Existing Activewear / Sportswear Portfolio', labelBm: 'Portfolio Activewear / Sportswear Sedia Ada', recommended: 3, max: 3 },
 ]

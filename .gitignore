@@ -1,6 +1,8 @@
 node_modules/
 dist/
 dist-admin/
+dist-desktop/
+release-desktop/
 .wrangler/
 .dev.vars
 *.log

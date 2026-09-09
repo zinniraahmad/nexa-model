@@ -5,6 +5,7 @@ import Apply from './pages/TalentApplication'
 import Privacy from './pages/Privacy'
 import NotFound from './pages/NotFound'
 import ApplicationsClosed from './pages/ApplicationsClosed'
+import TrainingProgress from './pages/TrainingProgress'
 import { usePathname } from './router'
 
 const SITE_URL = 'https://nexa-model.com'
@@ -26,21 +27,25 @@ export default function App() {
   const pathname = usePathname()
 
   const metadata = pageMetadata[pathname]
+  const progressToken = pathname.match(/^\/progress\/([A-Za-z0-9_-]+)$/)?.[1]
 
   useEffect(() => {
-    const page = metadata || { title: 'Page not found | Nexa Model', description: 'The page you requested could not be found.' }
+    const page = progressToken ? { title: 'Training Progress | Nexa Model', description: 'Private Nexa training progress.' } : metadata || { title: 'Page not found | Nexa Model', description: 'The page you requested could not be found.' }
+    const publicMetadataUrl = progressToken ? `${SITE_URL}/progress` : `${SITE_URL}${pathname}`
     document.title = page.title
     setMeta('meta[name="description"]', 'content', page.description)
     setMeta('meta[property="og:title"]', 'content', page.title)
     setMeta('meta[property="og:description"]', 'content', page.description)
-    setMeta('meta[property="og:url"]', 'content', `${SITE_URL}${pathname}`)
+    setMeta('meta[property="og:url"]', 'content', publicMetadataUrl)
     setMeta('meta[name="twitter:title"]', 'content', page.title)
     setMeta('meta[name="twitter:description"]', 'content', page.description)
-    setMeta('link[rel="canonical"]', 'href', `${SITE_URL}${pathname}`)
-  }, [metadata, pathname])
+    setMeta('link[rel="canonical"]', 'href', publicMetadataUrl)
+    setMeta('meta[name="robots"]', 'content', progressToken ? 'noindex,nofollow,noarchive' : metadata ? 'index,follow' : 'noindex')
+  }, [metadata, pathname, progressToken])
 
   let page
-  if (pathname === '/login' || pathname === '/portal') page = <Login />
+  if (progressToken) page = <TrainingProgress token={progressToken} />
+  else if (pathname === '/login' || pathname === '/portal') page = <Login />
   else if (pathname === '/apply') page = <Apply />
   else if (pathname === '/applications-closed') page = <ApplicationsClosed />
   else if (pathname === '/privacy') page = <Privacy />

@@ -3,6 +3,7 @@ import ImageKit from '@imagekit/nodejs'
 import { apiJson } from '../src/apiResponse.js'
 import { logError, recordOperationalFailure } from './observability.js'
 import { trackResendNetworkFailure, trackResendResponse } from '../src/emailAnalytics.js'
+import { handleTrainingApi } from './trainingApi.js'
 
 const STATUSES = ['submitted', 'reviewing', 'shortlisted', 'contacted', 'rejected']
 const SOFT_DELETE_DAYS = 30
@@ -149,6 +150,16 @@ function buildShortlistedEmail(applicant) {
   return { subject, text, html }
 }
 
+function buildRejectedEmail(applicant) {
+  const name = String(applicant.full_name || '').trim()
+  const privacyEmail = 'itszinniraahmad@gmail.com'
+  const subject = 'Update on your Nexa Model application'
+  const text = `Hi ${name},\n\nThank you for your interest in Nexa Model and for taking the time to submit your application.\n\nAfter reviewing your profile, we’re sorry to let you know that we will not be progressing with your application at this time. This decision reflects our current requirements and does not diminish your potential or the effort you put into applying.\n\nWe appreciate your interest and wish you every success in your future opportunities.\n\nWarm regards,\nNexa Model Admin\n\n---\n\nHai ${name},\n\nTerima kasih atas minat anda terhadap Nexa Model dan masa yang diluangkan untuk menghantar permohonan.\n\nSelepas meneliti profil anda, kami mohon maaf kerana tidak dapat meneruskan permohonan anda pada masa ini. Keputusan ini dibuat berdasarkan keperluan semasa kami dan tidak mengurangkan potensi atau usaha yang telah anda berikan.\n\nKami menghargai minat anda dan mendoakan kejayaan dalam peluang anda pada masa hadapan.\n\nSalam mesra,\nNexa Model Admin\n\nPrivacy enquiries / Pertanyaan privasi: ${privacyEmail}`
+  const safeName = escapeHtml(name)
+  const html = `<p>Hi ${safeName},</p><p>Thank you for your interest in Nexa Model and for taking the time to submit your application.</p><p>After reviewing your profile, we’re sorry to let you know that we will not be progressing with your application at this time. This decision reflects our current requirements and does not diminish your potential or the effort you put into applying.</p><p>We appreciate your interest and wish you every success in your future opportunities.</p><p>Warm regards,<br><strong>Nexa Model Admin</strong></p><hr><p>Hai ${safeName},</p><p>Terima kasih atas minat anda terhadap Nexa Model dan masa yang diluangkan untuk menghantar permohonan.</p><p>Selepas meneliti profil anda, kami mohon maaf kerana tidak dapat meneruskan permohonan anda pada masa ini. Keputusan ini dibuat berdasarkan keperluan semasa kami dan tidak mengurangkan potensi atau usaha yang telah anda berikan.</p><p>Kami menghargai minat anda dan mendoakan kejayaan dalam peluang anda pada masa hadapan.</p><p>Salam mesra,<br><strong>Nexa Model Admin</strong></p><p><small>Privacy enquiries / Pertanyaan privasi: ${privacyEmail}</small></p>`
+  return { subject, text, html }
+}
+
 async function sendShortlistedEmail(env, applicant) {
   if (!env.RESEND_API_KEY) return { ok: false, code: 'EMAIL_NOT_CONFIGURED', message: 'Resend is not configured for the admin service.' }
   const email = buildShortlistedEmail(applicant)
@@ -183,7 +194,42 @@ async function sendShortlistedEmail(env, applicant) {
   return { ok: true, id: tracked.id }
 }
 
+async function sendRejectedEmail(env, applicant) {
+  if (!env.RESEND_API_KEY) return { ok: false, code: 'EMAIL_NOT_CONFIGURED', message: 'Resend is not configured for the admin service.' }
+  const email = buildRejectedEmail(applicant)
+  let response
+  try {
+    response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': `application-rejected/${applicant.application_id}`,
+      },
+      body: JSON.stringify({
+        from: env.EMAIL_FROM || 'Nexa Model Admin <applications@updates.nexa-model.com>',
+        to: [applicant.email],
+        reply_to: 'itszinniraahmad@gmail.com',
+        ...email,
+      }),
+    })
+  } catch (error) {
+    await trackResendNetworkFailure(env, { applicationId: applicant.application_id, messageType: 'candidate_rejected', recipientType: 'candidate' })
+    logError('provider.resend_network_failed', { messageType: 'candidate_rejected' }, error)
+    await recordOperationalFailure(env, { service: 'admin_api', eventName: 'provider.resend_network_failed', httpStatus: 502 })
+    return { ok: false, code: 'EMAIL_ERROR', message: 'The rejection email service could not be reached. The candidate status was not changed.' }
+  }
+  const tracked = await trackResendResponse(env, response, { applicationId: applicant.application_id, messageType: 'candidate_rejected', recipientType: 'candidate' })
+  if (!response.ok) {
+    logError('provider.resend_request_failed', { messageType: 'candidate_rejected', httpStatus: response.status })
+    await recordOperationalFailure(env, { service: 'admin_api', eventName: 'provider.resend_request_failed', httpStatus: response.status })
+    return { ok: false, code: 'EMAIL_ERROR', message: 'The rejection email could not be sent. The candidate status was not changed.' }
+  }
+  return { ok: true, id: tracked.id }
+}
+
 function signPhotoUrls(env, photos) {
+  if (!photos.length) return []
   if (!env.IMAGEKIT_PRIVATE_KEY || !env.IMAGEKIT_URL_ENDPOINT) {
     throw new Error('Private image delivery is not configured for the admin Worker.')
   }
@@ -203,6 +249,21 @@ function signPhotoUrls(env, photos) {
         transformation: [{ width: 480, quality: 75, format: 'webp' }],
       }),
     }
+  })
+}
+
+function signProfilePhotoUrl(env, fileUrl) {
+  if (!fileUrl) return null
+  if (!env.IMAGEKIT_PRIVATE_KEY || !env.IMAGEKIT_URL_ENDPOINT) {
+    throw new Error('Private image delivery is not configured for the admin Worker.')
+  }
+  const imagekit = new ImageKit({ privateKey: env.IMAGEKIT_PRIVATE_KEY })
+  return imagekit.helper.buildSrc({
+    urlEndpoint: env.IMAGEKIT_URL_ENDPOINT,
+    src: fileUrl,
+    signed: true,
+    expiresIn: 300,
+    transformation: [{ width: 480, height: 640, crop: 'maintain_ratio', quality: 75, format: 'webp' }],
   })
 }
 
@@ -242,6 +303,11 @@ async function verifyApplicationPageState(env, applicationsClosed) {
 async function handleApi(request, env, url, authenticate = requireAdmin) {
   const auth = await authenticate(request, env)
   if (auth.error) return auth.error
+
+  if (url.pathname.startsWith('/api/admin/training/')) {
+    const trainingResponse = await handleTrainingApi(request, env, url, auth)
+    if (trainingResponse) return trainingResponse
+  }
 
   if (url.pathname === '/api/admin/session' && request.method === 'GET') {
     return apiJson({ email: auth.email })
@@ -435,7 +501,11 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
              datetime(d.submitted_at, '+6 months') AS retention_due_at,
              CASE WHEN datetime(d.submitted_at, '+6 months') <= datetime('now', '+30 days') THEN 1 ELSE 0 END AS retention_warning,
              CASE WHEN datetime(d.submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS retention_overdue,
-             COUNT(p.file_id) AS photo_count
+             COUNT(p.file_id) AS photo_count,
+             COALESCE(
+               MAX(CASE WHEN p.photo_type = 'front_facing' OR p.photo_type LIKE 'front_facing_%' THEN p.file_url END),
+               MIN(p.file_url)
+             ) AS profile_photo_url
       FROM applicants a
       LEFT JOIN applicant_details d ON d.application_id = a.application_id
       LEFT JOIN applicant_photos p ON p.application_id = a.application_id
@@ -474,7 +544,11 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
     const filteredTotal = Number(filteredCount?.total || 0)
     const totalPages = Math.max(1, Math.ceil(filteredTotal / ADMIN_PAGE_SIZE))
     return apiJson({
-      applications: result.results.map(({ tags_json: tagsJson, ...application }) => ({ ...application, tags: parseTags(tagsJson) })),
+      applications: result.results.map(({ tags_json: tagsJson, profile_photo_url: profilePhotoUrl, ...application }) => ({
+        ...application,
+        tags: parseTags(tagsJson),
+        profile_photo_url: signProfilePhotoUrl(env, profilePhotoUrl),
+      })),
       summary: {
         total: Number(summary?.total || 0),
         submitted: Number(summary?.submitted || 0),
@@ -501,7 +575,7 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
       ? [...new Set(body.application_ids.map((id) => String(id).trim()).filter(Boolean))]
       : []
     const status = String(body?.status || '')
-    if (!STATUSES.includes(status) || status === 'shortlisted' || !applicationIds.length || applicationIds.length > 100) {
+    if (!STATUSES.includes(status) || ['shortlisted', 'rejected'].includes(status) || !applicationIds.length || applicationIds.length > 100) {
       return apiJson({ error: 'Select between 1 and 100 applications and a valid status.', code: 'VALIDATION_ERROR' }, { status: 400 })
     }
     const placeholders = applicationIds.map(() => '?').join(', ')
@@ -534,7 +608,7 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
     const application = await env.DB.prepare(`
       SELECT a.application_id, a.full_name, a.email, a.phone, a.current_location,
              d.responses_json, d.application_status, d.submitted_at, d.tags_json,
-             d.admin_notes, d.reviewed_at, d.reviewed_by, d.shortlisted_email_sent_at,
+             d.admin_notes, d.reviewed_at, d.reviewed_by, d.shortlisted_email_sent_at, d.rejected_email_sent_at,
              datetime(d.submitted_at, '+6 months') AS retention_due_at,
              CASE WHEN datetime(d.submitted_at, '+6 months') <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS retention_overdue
       FROM applicants a
@@ -584,11 +658,12 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
     const notes = String(body.notes || '').trim()
     const tags = normalizeTags(body.tags)
     const sendShortlistEmail = body.send_shortlisted_email === true
+    const sendRejectedEmailConfirmed = body.send_rejected_email === true
     if (!STATUSES.includes(status) || notes.length > 10000 || !tags) {
       return apiJson({ error: 'Invalid review update.', code: 'VALIDATION_ERROR' }, { status: 400 })
     }
     const existing = await env.DB.prepare(`
-      SELECT d.application_status, d.admin_notes, d.tags_json, d.shortlisted_email_sent_at,
+      SELECT d.application_status, d.admin_notes, d.tags_json, d.shortlisted_email_sent_at, d.rejected_email_sent_at,
              a.application_id, a.full_name, a.email
       FROM applicant_details d
       JOIN applicants a ON a.application_id = d.application_id
@@ -600,12 +675,22 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
     if (isNewShortlist && !sendShortlistEmail) {
       return apiJson({ error: 'Confirm the shortlist email before changing this candidate to Shortlisted.', code: 'SHORTLIST_CONFIRMATION_REQUIRED' }, { status: 400 })
     }
+    const isNewRejection = status === 'rejected' && existing.application_status !== 'rejected'
+    if (isNewRejection && !sendRejectedEmailConfirmed) {
+      return apiJson({ error: 'Confirm the rejection email before changing this candidate to Rejected.', code: 'REJECTION_CONFIRMATION_REQUIRED' }, { status: 400 })
+    }
 
     let shortlistEmailSentAt = null
     if (isNewShortlist && !existing.shortlisted_email_sent_at) {
       const emailResult = await sendShortlistedEmail(env, existing)
       if (!emailResult.ok) return apiJson({ error: emailResult.message, code: emailResult.code }, { status: 502 })
       shortlistEmailSentAt = new Date().toISOString()
+    }
+    let rejectedEmailSentAt = null
+    if (isNewRejection && !existing.rejected_email_sent_at) {
+      const emailResult = await sendRejectedEmail(env, existing)
+      if (!emailResult.ok) return apiJson({ error: emailResult.message, code: emailResult.code }, { status: 502 })
+      rejectedEmailSentAt = new Date().toISOString()
     }
 
     const changedAt = new Date().toISOString()
@@ -620,9 +705,10 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
       env.DB.prepare(`
         UPDATE applicant_details
         SET application_status = ?, admin_notes = ?, tags_json = ?, reviewed_at = ?, reviewed_by = ?,
-            shortlisted_email_sent_at = COALESCE(?, shortlisted_email_sent_at)
+            shortlisted_email_sent_at = COALESCE(?, shortlisted_email_sent_at),
+            rejected_email_sent_at = COALESCE(?, rejected_email_sent_at)
         WHERE application_id = ?
-      `).bind(status, notes, tagsJson, changedAt, auth.email, shortlistEmailSentAt, applicationId),
+      `).bind(status, notes, tagsJson, changedAt, auth.email, shortlistEmailSentAt, rejectedEmailSentAt, applicationId),
     ])
     if (!result.meta.changes) return apiJson({ error: 'Application not found.' }, { status: 404 })
     return apiJson({ success: true, review: {
@@ -634,7 +720,7 @@ async function handleApi(request, env, url, authenticate = requireAdmin) {
       new_tags: tags,
       changed_at: changedAt,
       changed_by: auth.email,
-    }, shortlisted_email_sent_at: shortlistEmailSentAt || existing.shortlisted_email_sent_at || null })
+    }, shortlisted_email_sent_at: shortlistEmailSentAt || existing.shortlisted_email_sent_at || null, rejected_email_sent_at: rejectedEmailSentAt || existing.rejected_email_sent_at || null })
   }
 
   const restoreMatch = url.pathname.match(/^\/api\/admin\/applications\/([^/]+)\/restore$/)
@@ -765,4 +851,4 @@ export default {
   },
 }
 
-export { ADMIN_PAGE_SIZE, buildShortlistedEmail, enforceAdminRateLimit, getImageKitUsage, handleApi, imageKitUsageDateRange, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded, signPhotoUrls, verifyApplicationPageState }
+export { buildRejectedEmail, buildShortlistedEmail, enforceAdminRateLimit, getImageKitUsage, handleApi, imageKitUsageDateRange, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded, signPhotoUrls, verifyApplicationPageState }

@@ -1,6 +1,7 @@
 import { applicationSections, declarationFields, photoFields } from './applicationForm.js'
 import { API_SECURITY_HEADERS, apiJson as json } from './apiResponse.js'
 import { trackResendNetworkFailure, trackResendResponse } from './emailAnalytics.js'
+import { handlePublicProgress } from './progressApi.js'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/
 const UPLOAD_TOKEN_TTL_MS = 60 * 60 * 1000
@@ -112,8 +113,15 @@ function notFoundPage() {
 }
 
 async function handleStaticRequest(request, env, url) {
-  if (['GET', 'HEAD'].includes(request.method) && SPA_PATHS.has(url.pathname)) {
-    return env.ASSETS.fetch(new Request(new URL('/', request.url), request))
+  if (['GET', 'HEAD'].includes(request.method) && (SPA_PATHS.has(url.pathname) || /^\/progress\/[A-Za-z0-9_-]+$/.test(url.pathname))) {
+    const response = await env.ASSETS.fetch(new Request(new URL('/', request.url), request))
+    if (url.pathname.startsWith('/progress/')) {
+      const secured = new Response(response.body, response)
+      secured.headers.set('X-Robots-Tag', 'noindex, nofollow')
+      secured.headers.set('Cache-Control', 'private, no-store')
+      return secured
+    }
+    return response
   }
   const asset = await env.ASSETS.fetch(request)
   if (asset.status !== 404 || !['GET', 'HEAD'].includes(request.method)) return asset
@@ -751,14 +759,6 @@ async function handleFinalize(request, env) {
     if (applicant.application_status === 'pending_upload') {
       const result = await env.DB.prepare(`SELECT photo_type, COUNT(*) AS count FROM applicant_photos WHERE application_id = ? GROUP BY photo_type`)
         .bind(applicationId).all()
-      const uploadedTypes = new Set(result.results.map((row) => row.photo_type))
-      for (const field of photoFields) {
-        for (let index = 1; index <= field.min; index += 1) {
-          if (!uploadedTypes.has(`${field.key}_${index}`)) {
-            return json({ success: false, error: `${field.label} is incomplete.` }, { status: 400 })
-          }
-        }
-      }
       const maxPhotos = photoFields.reduce((sum, field) => sum + field.max, 0)
       if (result.results.reduce((sum, row) => sum + Number(row.count), 0) > maxPhotos) {
         return json({ success: false, error: 'Application contains too many photos.' }, { status: 400 })
@@ -821,6 +821,8 @@ export default {
     if (url.pathname === '/api/config' && request.method === 'GET') {
       return json({ turnstile_site_key: env.TURNSTILE_SITE_KEY || '' })
     }
+    const progressMatch = url.pathname.match(/^\/api\/public\/progress\/([A-Za-z0-9_-]+)$/)
+    if (progressMatch && request.method === 'GET') return handlePublicProgress(request, env, progressMatch[1])
     if (APPLICATION_API_PATHS.has(url.pathname) && await applicationsAreClosed(env)) return applicationsClosedResponse()
     if (url.pathname === '/api/application-access' && request.method === 'POST') return handleApplicationAccess(request, env)
     if (url.pathname === '/api/recover' && request.method === 'POST') return handleRecoverApplication(request, env)

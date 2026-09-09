@@ -5,7 +5,7 @@ import { applicationSections, declarationFields, photoFields } from '../src/appl
 import publicWorker, { applicationsAreClosed, detectImageMime, handleApplicationAccess, handleApply, handleFinalize, handleRecoverApplication, handleStaticRequest, parseJsonRequest, parseMultipartRequest, parsePhotoSlot, readRequestBody, validateAnswers } from '../src/worker.js'
 import { API_SECURITY_HEADERS, apiJson } from '../src/apiResponse.js'
 import { requireAdmin } from '../admin/access.js'
-import { buildShortlistedEmail, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded } from '../admin/worker.js'
+import { buildRejectedEmail, buildShortlistedEmail, matchesDeletionConfirmation, normalizeTags, parseResponses, recoveryPeriodEnded } from '../admin/worker.js'
 
 function validValue(field) {
   if (field.type === 'checkbox') return [field.options[0]]
@@ -317,9 +317,9 @@ test('requires a separate final Turnstile token before creating an application',
   assert.match((await response.json()).error, /Final security verification failed/i)
 })
 
-test('submits immediately and sends one candidate receipt plus one admin notification', async (context) => {
+test('submits with no photos and sends one candidate receipt plus one admin notification', async (context) => {
   const state = { status: 'pending_upload', confirmationSentAt: null, adminNotificationSentAt: null, resendCalls: 0 }
-  const uploadedRows = photoFields.flatMap((field) => Array.from({ length: field.min }, (_, index) => ({ photo_type: `${field.key}_${index + 1}`, count: 1 })))
+  const uploadedRows = []
   const env = {
     RESEND_API_KEY: 'test-resend', EMAIL_FROM: 'Nexa Model <applications@nexa-model.com>', PUBLIC_SITE_URL: 'https://nexa-model.com',
     ADMIN_NOTIFICATION_EMAIL: 'admin@example.com', ADMIN_PORTAL_URL: 'https://onlyadmin.nexa-model.com',
@@ -558,6 +558,39 @@ test('admin defaults to dark mode without relying on CSP-blocked inline scripts'
   assert.match(index, /<html lang="en" data-theme="dark">/)
   assert.doesNotMatch(index, /<script>\s*document\.documentElement\.dataset\.theme/)
   assert.match(main, /localStorage\.getItem\('nexa-admin-theme-v2'\) \|\| 'dark'/)
+})
+
+test('admin applications support list and icon views with candidate profile thumbnails', () => {
+  const worker = readFileSync(new URL('../admin/worker.js', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('../admin/src/App.jsx', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('../admin/src/styles.css', import.meta.url), 'utf8')
+
+  assert.match(worker, /profile_photo_url/)
+  assert.match(worker, /front_facing/)
+  assert.match(app, /Candidate view/)
+  assert.match(app, /> List</)
+  assert.match(app, /> Icon</)
+  assert.match(app, /application-icon-grid/)
+  assert.match(app, /profile_photo_url/)
+  assert.match(styles, /\.application-icon-grid/)
+  assert.match(styles, /\.candidate-icon-photo img/)
+})
+
+test('rejection requires confirmation and creates a bilingual candidate email', () => {
+  const message = buildRejectedEmail({ full_name: 'Candidate Name' })
+  assert.equal(message.subject, 'Update on your Nexa Model application')
+  assert.match(message.text, /Hi Candidate Name/)
+  assert.match(message.text, /will not be progressing with your application/)
+  assert.match(message.text, /Hai Candidate Name/)
+  assert.match(message.text, /tidak dapat meneruskan permohonan anda/)
+  assert.match(message.text, /Nexa Model Admin/)
+
+  const worker = readFileSync(new URL('../admin/worker.js', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('../admin/src/App.jsx', import.meta.url), 'utf8')
+  assert.match(worker, /REJECTION_CONFIRMATION_REQUIRED/)
+  assert.match(worker, /application-rejected\/\$\{applicant\.application_id\}/)
+  assert.match(app, /Reject this candidate\?/)
+  assert.match(app, /send a rejection email to the candidate/)
 })
 
 test('admin ImageKit analytics shows readable usage, remaining quota, reset timing and refresh', () => {
