@@ -51,13 +51,27 @@ async function listAppointments(env, url) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return error('Choose a valid calendar date range.', 'VALIDATION_ERROR')
   const rows = await env.DB.prepare(`
     SELECT t.id, t.candidate_id, t.scheduled_at, t.duration_minutes, t.status, t.location, t.notes,
-           t.created_by, t.created_at, t.updated_at, a.full_name, a.email, a.phone
+           t.created_by, t.created_at, t.updated_at, a.full_name, a.email, a.phone,
+           (
+             SELECT p.file_url
+             FROM applicant_photos p
+             WHERE p.application_id = a.application_id
+             ORDER BY CASE WHEN p.photo_type = 'front_facing' OR p.photo_type LIKE 'front_facing_%' THEN 0 ELSE 1 END,
+                      p.photo_type, p.file_name
+             LIMIT 1
+           ) AS profile_photo_url
     FROM training_appointments t
     JOIN applicants a ON a.application_id = t.candidate_id
     WHERE a.deleted_at IS NULL AND substr(t.scheduled_at, 1, 10) BETWEEN ? AND ?
     ORDER BY t.scheduled_at, a.full_name COLLATE NOCASE
   `).bind(from, to).all()
-  return apiJson({ appointments: rows.results, time_zone: 'Asia/Kuala_Lumpur' })
+  return apiJson({
+    appointments: rows.results.map(({ profile_photo_url: profilePhotoUrl, ...appointment }) => ({
+      ...appointment,
+      profile_photo_url: signedProfilePhotoUrl(env, profilePhotoUrl),
+    })),
+    time_zone: 'Asia/Kuala_Lumpur',
+  })
 }
 
 async function saveAppointment(request, env, auth, appointmentId = null) {
@@ -102,6 +116,18 @@ function signedReferenceUrl(env, url) {
   if (!url || !env.IMAGEKIT_PRIVATE_KEY || !env.IMAGEKIT_URL_ENDPOINT) return url || null
   const imagekit = new ImageKit({ privateKey: env.IMAGEKIT_PRIVATE_KEY })
   return imagekit.helper.buildSrc({ urlEndpoint: env.IMAGEKIT_URL_ENDPOINT, src: url, signed: true, expiresIn: 300 })
+}
+
+function signedProfilePhotoUrl(env, url) {
+  if (!url || !env.IMAGEKIT_PRIVATE_KEY || !env.IMAGEKIT_URL_ENDPOINT) return url || null
+  const imagekit = new ImageKit({ privateKey: env.IMAGEKIT_PRIVATE_KEY })
+  return imagekit.helper.buildSrc({
+    urlEndpoint: env.IMAGEKIT_URL_ENDPOINT,
+    src: url,
+    signed: true,
+    expiresIn: 300,
+    transformation: [{ width: 128, height: 128, quality: 75, format: 'webp' }],
+  })
 }
 
 async function getTrainingOverview(env, candidateId) {

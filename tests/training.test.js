@@ -19,9 +19,11 @@ function database() {
     PRAGMA foreign_keys = ON;
     CREATE TABLE applicants (application_id TEXT PRIMARY KEY, full_name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL, current_location TEXT NOT NULL, deleted_at TEXT);
     CREATE TABLE applicant_details (application_id TEXT PRIMARY KEY, responses_json TEXT NOT NULL DEFAULT '{}', application_status TEXT NOT NULL, submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (application_id) REFERENCES applicants(application_id) ON DELETE CASCADE);
+    CREATE TABLE applicant_photos (file_id TEXT PRIMARY KEY, application_id TEXT NOT NULL, file_name TEXT NOT NULL, file_url TEXT NOT NULL, photo_type TEXT NOT NULL, FOREIGN KEY (application_id) REFERENCES applicants(application_id) ON DELETE CASCADE);
     INSERT INTO applicants VALUES ('candidate-a', 'Aisha Trainee', 'aisha@example.test', '+60111111111', 'Kuala Lumpur', NULL);
     INSERT INTO applicants VALUES ('candidate-b', 'Other Trainee', 'other@example.test', '+60222222222', 'Johor', NULL);
     INSERT INTO applicant_details (application_id, application_status) VALUES ('candidate-a', 'contacted'), ('candidate-b', 'shortlisted');
+    INSERT INTO applicant_photos VALUES ('candidate-a-front', 'candidate-a', 'front.jpg', '/applications/candidate-a/front.jpg', 'front_facing');
   `)
   raw.exec(readFileSync(new URL('../migrations/0019_training_evaluation.sql', import.meta.url), 'utf8'))
   raw.exec(readFileSync(new URL('../migrations/0021_training_appointments.sql', import.meta.url), 'utf8'))
@@ -59,6 +61,7 @@ test('training calendar creates, lists and updates candidate appointments', asyn
   assert.equal(calendar.body.appointments.length, 1)
   assert.equal(calendar.body.appointments[0].full_name, 'Aisha Trainee')
   assert.equal(calendar.body.appointments[0].scheduled_at, '2026-09-10T14:30:00+08:00')
+  assert.equal(calendar.body.appointments[0].profile_photo_url, '/applications/candidate-a/front.jpg')
 
   const updated = await json(await api(DB, `/api/admin/training/appointments/${created.body.appointment_id}`, 'PATCH', {
     candidate_id: 'candidate-a',

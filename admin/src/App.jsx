@@ -935,7 +935,7 @@ export default function App() {
   const [summary, setSummary] = useState(emptySummary)
   const [pagination, setPagination] = useState(emptyPagination)
   const [selected, setSelected] = useState(() => initialParam('application') || null)
-  const [search, setSearch] = useState(() => initialParam('search'))
+  const [search, setSearch] = useState('')
   const [status, setStatus] = useState(() => initialParam('status'))
   const [dateFrom, setDateFrom] = useState(() => initialParam('date_from'))
   const [dateTo, setDateTo] = useState(() => initialParam('date_to'))
@@ -960,6 +960,7 @@ export default function App() {
   const [page, setPage] = useState(() => Math.max(1, Number.parseInt(initialParam('page', '1'), 10) || 1))
   const [filtersExpanded, setFiltersExpanded] = useState(false)
   const loadRequestRef = useRef(0)
+  const searchInputRef = useRef(null)
 
   const [sort, direction] = sortValue.split(':')
   const query = useMemo(() => new URLSearchParams({
@@ -1179,7 +1180,7 @@ export default function App() {
           </button>)}
         </section>}
         {retentionWarnings.length > 0 && <section className="retention-alert" role="status"><AlertTriangle size={20} /><div><strong>{retentionWarnings.length} retention review{retentionWarnings.length === 1 ? '' : 's'} due</strong><span>These applications reach their six-month deletion date within 30 days or are already overdue. Review before deleting.</span></div></section>}
-        <section className="toolbar primary-filters"><label htmlFor="application-search"><span className="sr-only">Search applications</span><Search size={18} aria-hidden="true" /><input id="application-search" aria-label="Search applications" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1) }} placeholder="Search name, email, phone or reference" /></label><select aria-label="Filter by status" value={status} onChange={(event) => applyStatusFilter(event.target.value)}><option value="">All statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></section>
+        <section className="toolbar primary-filters"><div className="application-search-field"><label className="sr-only" htmlFor="application-search">Search applications</label><Search size={18} aria-hidden="true" /><input ref={searchInputRef} id="application-search" aria-label="Search applications" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1) }} placeholder="Search name, email, phone or reference" autoComplete="off" />{search && <button type="button" className="clear-search-button" aria-label="Clear search" onClick={() => { setSearch(''); setPage(1); searchInputRef.current?.focus() }}><X size={18} aria-hidden="true" /></button>}</div><select aria-label="Filter by status" value={status} onChange={(event) => applyStatusFilter(event.target.value)}><option value="">All statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></section>
         <button type="button" className="mobile-filter-toggle" aria-expanded={filtersExpanded} aria-controls="advanced-application-filters" onClick={() => setFiltersExpanded((current) => !current)}><span>More filters{advancedFilterCount ? ` (${advancedFilterCount})` : ''}</span><ChevronDown className={filtersExpanded ? 'expanded' : undefined} size={18} /></button>
         <section id="advanced-application-filters" className={`advanced-filters${filtersExpanded ? ' expanded' : ''}`} aria-label="Application filters">
           <label>From<input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1) }} /></label>

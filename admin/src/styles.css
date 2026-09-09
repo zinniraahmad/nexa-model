@@ -139,8 +139,11 @@ h1 { margin: 0 0 8px; font-size: clamp(41px, 5vw, 65px); letter-spacing: -.055em
 .failure-row code { color: var(--ink); font-size: 12px; }
 .analytics-footnote { margin: 13px 2px 0; }
 .toolbar { display: flex; gap: 12px; margin-bottom: 16px; }
-.toolbar label { flex: 1; display: flex; align-items: center; gap: 11px; padding: 0 16px; background: var(--input); border: 1px solid var(--line); border-radius: 8px; }
+.application-search-field { flex: 1; display: flex; align-items: center; gap: 11px; padding: 0 9px 0 16px; background: var(--input); border: 1px solid var(--line); border-radius: 8px; }
 .toolbar input { min-height: 44px; border: 0; outline: 0; padding: 11px 0; width: 100%; background: transparent; }
+.clear-search-button { flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; }
+.clear-search-button:hover { color: var(--ink); background: var(--surface-hover); }
+.clear-search-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .toolbar select { min-height: 44px; }
 select { border: 1px solid var(--line); border-radius: 8px; padding: 0 38px 0 14px; background: var(--input); color: var(--ink); }
 .advanced-filters { display: grid; grid-template-columns: repeat(2, minmax(145px, .7fr)) minmax(175px, 1fr) auto auto; gap: 10px; align-items: end; margin-bottom: 16px; }
@@ -656,11 +659,14 @@ dd { margin: 0; font-size: 18px; line-height: 1.55; overflow-wrap: anywhere; }
 .calendar-day.today .calendar-day-number { color: #fff; background: var(--accent); }
 :root[data-theme='dark'] .calendar-day.today .calendar-day-number { color: #1b1a16; }
 .calendar-day-events { min-width: 0; display: grid; gap: 4px; }
-.calendar-event { min-width: 0; display: block; overflow: hidden; padding: 4px 6px; border-left: 3px solid #6b8ea8; border-radius: 3px; color: var(--ink); background: rgba(82, 137, 181, .12); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-event { min-width: 0; display: block; overflow: hidden; padding: 4px 6px; border-left: 3px solid #6b8ea8; border-radius: 3px; color: var(--ink); background: rgba(82, 137, 181, .12); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .calendar-event b { margin-right: 5px; font-weight: 700; }
 .calendar-event.event-confirmed { border-color: #4a9255; background: rgba(74, 146, 85, .14); }
 .calendar-event.event-completed { border-color: #77746a; background: var(--line-soft); }
 .calendar-event.event-cancelled, .calendar-event.event-no_show { border-color: #b85a5a; background: rgba(184, 90, 90, .12); text-decoration: line-through; }
+.calendar-event.time-morning { border-color: #4a9255; background: rgba(74, 146, 85, .2); }
+.calendar-event.time-afternoon { border-color: #d5a526; background: rgba(213, 165, 38, .2); }
+.calendar-event.time-night { border-color: #4c83bb; color: #edf5ff; background: #1c3550; }
 .calendar-day-events > small { color: var(--soft-muted); font-size: 10px; font-weight: 700; }
 .calendar-loading { min-height: 755px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 14px; }
 .calendar-agenda { position: sticky; top: 94px; }
@@ -673,12 +679,15 @@ dd { margin: 0; font-size: 18px; line-height: 1.55; overflow-wrap: anywhere; }
 .agenda-empty p { margin: 0 0 16px; font-size: 13px; line-height: 1.5; }
 .agenda-empty button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--input); cursor: pointer; font-size: 13px; font-weight: 700; }
 .agenda-list { display: grid; max-height: calc(100vh - 210px); overflow-y: auto; }
-.agenda-list > article { display: grid; grid-template-columns: 66px 1fr; gap: 12px; padding: 17px 16px; border-bottom: 1px solid var(--line-soft); }
+.agenda-list > article { display: grid; grid-template-columns: 100px 1fr; gap: 12px; padding: 17px 16px; border-bottom: 1px solid var(--line-soft); }
 .agenda-time { display: grid; align-content: start; gap: 3px; }
 .agenda-time strong { font-size: 13px; }
 .agenda-time span { color: var(--soft-muted); font-size: 11px; }
+.agenda-profile-photo { width: 100%; aspect-ratio: 3 / 4; margin-top: 9px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--input); }
+.agenda-profile-photo img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.agenda-profile-photo > span { width: 100%; height: 100%; display: grid; place-items: center; color: var(--ink); font-size: 18px; font-weight: 800; }
 .agenda-details { min-width: 0; }
-.agenda-details h3 { margin: 8px 0 7px; font-size: 17px; }
+.agenda-details h3 { min-width: 0; margin: 8px 0 7px; overflow: hidden; font-size: 17px; text-overflow: ellipsis; }
 .agenda-details p { display: flex; align-items: center; gap: 6px; margin: 4px 0; color: var(--muted); font-size: 12px; }
 .agenda-details > small { display: block; margin-top: 9px; padding: 8px; border-radius: 5px; color: var(--muted); background: var(--input); font-size: 11px; line-height: 1.45; }
 .appointment-status { display: inline-flex; padding: 4px 7px; border-radius: 20px; color: #285d84; background: #dceaf4; font-size: 9px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
@@ -697,6 +706,7 @@ dd { margin: 0; font-size: 18px; line-height: 1.55; overflow-wrap: anywhere; }
 .appointment-form-grid label { min-width: 0; display: grid; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 700; }
 .appointment-form-grid .wide { grid-column: 1 / -1; }
 .appointment-form-grid input, .appointment-form-grid select, .appointment-form-grid textarea { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: var(--input); outline: 0; }
+.appointment-form-grid .duration-field input { color: var(--muted); cursor: default; }
 .appointment-form-grid textarea { resize: vertical; }
 .appointment-form-grid input:focus, .appointment-form-grid select:focus, .appointment-form-grid textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
 .calendar-dialog > footer { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
